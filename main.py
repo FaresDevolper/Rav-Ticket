@@ -195,8 +195,8 @@ class TicketModal(discord.ui.Modal, title="فتح تذكرة"):
             title="🎫 تذكرة دعم فني",
             description=(
                 f"أهلاً {user.mention} 👋\n"
-                "تم فتح تذكرتك بنجاح، سيتم الرد عليك من فريق الدعم بأقرب وقت.\n"
-                "ننصحك بكتابة كل التفاصيل وإرفاق الصور إذا لزم."
+                "تم فتح تذكرتك بنجاح سيتم الرد عليك من فريق الدعم بأقرب وقت.\n"
+                " ننصحك بكتابة كل التفاصيل وإرفاق الصور إذا لزم الامر."
             ),
             color=COLOR_OPEN,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
