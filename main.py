@@ -349,7 +349,7 @@ class TicketControls(discord.ui.View):
             )
 
         await interaction.response.send_message(
-            embed=discord.Embed(description=f"✅ تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
+            embed=discord.Embed(description=f" تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
             ephemeral=True,
         )
         await interaction.channel.send(
