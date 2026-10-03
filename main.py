@@ -17,7 +17,7 @@ OWNER_ROLE_ID = 1425199301956599888                # آيدي رتبة الاو�
 ADMIN_ROLE_ID = 1465057908554334220                # آيدي رتبة ادمن تيكت
 PANEL_CHANNEL_ID = 1465041190163578972             # آيدي روم صورة التيكت (اللي تنرسل فيه اللوحة)
 CATEGORY_ID = 1465040666282168470                  # آيدي كاتيجوري التذاكر
-LOG_CHANNEL_ID = 1550546365338099803                               # آيدي روم السجل (اتركه 0 إذا ما تبيه)
+LOG_CHANNEL_ID = 1550546365338099803                                # آيدي روم السجل (اتركه 0 إذا ما تبيه)
 GUILD_ID = 1425195739591610451                     # آيدي السيرفر (يخلي الأوامر تظهر فوراً)
 
 # صورة اللوحة: ارفعها في جيت هوب بجانب main.py وبنفس الاسم
@@ -25,13 +25,13 @@ PANEL_IMAGE = "background.png"
 
 # أقسام التذاكر (تقدر تغيّر الأسماء أو تضيف أقسام من هنا)
 SECTIONS = [
-    {"label": "استفسار", "emoji": ", "desc": "اسأل عن أي شيء يخص السيرفر"},
-    {"label": "طلب رول", "emoji": "", "desc": "اطلب رتبة أو رول"},
-    {"label": "الفعاليات", "emoji": 🎉", "desc": "كل ما يخص الفعاليات"},
-    {"label": "شكوى على عضو", "emoji": "", "desc": "قدّم شكوى ضد عضو"},
-    {"label": "شكوى على اداري", "emoji": "🛡️", "desc": "قدّم شكوى ضد إداري"},
-    {"label": "طلب بروفايل كامل للبنت", "emoji": "", "desc": "طلب بروفايل كامل (بنات)"},
-    {"label": "طلب بروفايل كامل للرجال", "emoji": "", "desc": "طلب بروفايل كامل (رجال)"},
+    {"label": "استفسار", "emoji": "\u2753", "desc": "اسأل عن أي شيء يخص السيرفر"},
+    {"label": "طلب رول", "emoji": "\U0001f3ad", "desc": "اطلب رتبة أو رول"},
+    {"label": "الفعاليات", "emoji": "\U0001f389", "desc": "كل ما يخص الفعاليات"},
+    {"label": "شكوى على عضو", "emoji": "\u26a0\ufe0f", "desc": "قدّم شكوى ضد عضو"},
+    {"label": "شكوى على اداري", "emoji": "\U0001f6e1\ufe0f", "desc": "قدّم شكوى ضد إداري"},
+    {"label": "طلب بروفايل كامل للبنت", "emoji": "\U0001f469", "desc": "طلب بروفايل كامل (بنات)"},
+    {"label": "طلب بروفايل كامل للرجال", "emoji": "\U0001f468", "desc": "طلب بروفايل كامل (رجال)"},
 ]
 
 PORT = int(os.getenv("PORT", "10000"))            # بورت ريندر (لا تغيره)
@@ -113,7 +113,7 @@ async def build_transcript(channel: discord.TextChannel) -> discord.File:
 
 
 async def deny(interaction: discord.Interaction, text: str):
-    embed = discord.Embed(description=f"⛔ {text}", color=COLOR_CLOSE)
+    embed = discord.Embed(description=f"\u26d4 {text}", color=COLOR_CLOSE)
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
@@ -192,21 +192,21 @@ class TicketModal(discord.ui.Modal, title="فتح تذكرة"):
         )
 
         embed = discord.Embed(
-            title="🎫 تذكرة دعم فني",
+            title="\U0001f3ab تذكرة دعم فني",
             description=(
-                f"أهلاً {user.mention} 👋\n"
+                f"أهلاً {user.mention} \U0001f44b\n"
                 "تم فتح تذكرتك بنجاح، سيتم الرد عليك من فريق الدعم بأقرب وقت.\n"
                 "ننصحك بكتابة كل التفاصيل وإرفاق الصور إذا لزم."
             ),
             color=COLOR_OPEN,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
-        embed.add_field(name="📂 القسم", value=f"{self.section['emoji']} {self.section['label']}", inline=True)
-        embed.add_field(name="📝 الموضوع", value=self.subject.value, inline=False)
-        embed.add_field(name="👤 صاحب التذكرة", value=user.mention, inline=True)
-        embed.add_field(name="📌 الحالة", value="🟡 بانتظار الاستلام", inline=True)
+        embed.add_field(name="\U0001f4c2 القسم", value=f"{self.section['emoji']} {self.section['label']}", inline=True)
+        embed.add_field(name="\U0001f4dd الموضوع", value=self.subject.value, inline=False)
+        embed.add_field(name="\U0001f464 صاحب التذكرة", value=user.mention, inline=True)
+        embed.add_field(name="\U0001f4cc الحالة", value="\U0001f7e1 بانتظار الاستلام", inline=True)
         embed.set_thumbnail(url=user.display_avatar.url)
-        embed.set_footer(text=f"{guild.name} • نظام التذاكر", icon_url=guild.icon.url if guild.icon else None)
+        embed.set_footer(text=f"{guild.name} \u2022 نظام التذاكر", icon_url=guild.icon.url if guild.icon else None)
 
         await channel.send(
             content=f"{user.mention} | {admin_role.mention}",
@@ -216,11 +216,11 @@ class TicketModal(discord.ui.Modal, title="فتح تذكرة"):
         )
 
         await interaction.followup.send(
-            embed=discord.Embed(description=f"✅ تم فتح تذكرتك: {channel.mention}", color=COLOR_CLAIM),
+            embed=discord.Embed(description=f"\u2705 تم فتح تذكرتك: {channel.mention}", color=COLOR_CLAIM),
             ephemeral=True,
         )
 
-        log = discord.Embed(title="📂 تذكرة جديدة", color=COLOR_OPEN, timestamp=datetime.datetime.now(datetime.timezone.utc))
+        log = discord.Embed(title="\U0001f4c2 تذكرة جديدة", color=COLOR_OPEN, timestamp=datetime.datetime.now(datetime.timezone.utc))
         log.add_field(name="الروم", value=channel.mention)
         log.add_field(name="صاحب التذكرة", value=user.mention)
         log.add_field(name="القسم", value=f"{self.section['emoji']} {self.section['label']}")
@@ -271,7 +271,7 @@ class TicketControls(discord.ui.View):
             self.claim.label = "تم الاستلام"
 
     # ---------- استلام ----------
-    @discord.ui.button(label="استلام", emoji="✋", style=discord.ButtonStyle.success, custom_id="ticket:claim")
+    @discord.ui.button(label="استلام", emoji="\u270b", style=discord.ButtonStyle.success, custom_id="ticket:claim")
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
@@ -285,26 +285,26 @@ class TicketControls(discord.ui.View):
         embed = interaction.message.embeds[0]
         # تحديث حقل الحالة
         for i, f in enumerate(embed.fields):
-            if f.name == "📌 الحالة":
-                embed.set_field_at(i, name="📌 الحالة", value="🟢 تم الاستلام", inline=True)
-        embed.add_field(name="🛡️ المسؤول عن التذكرة", value=interaction.user.mention, inline=True)
+            if f.name == "\U0001f4cc الحالة":
+                embed.set_field_at(i, name="\U0001f4cc الحالة", value="\U0001f7e2 تم الاستلام", inline=True)
+        embed.add_field(name="\U0001f6e1\ufe0f المسؤول عن التذكرة", value=interaction.user.mention, inline=True)
         embed.color = COLOR_CLAIM
 
         await interaction.response.edit_message(embed=embed, view=TicketControls(claimed=True))
         await interaction.channel.send(
             embed=discord.Embed(
-                description=f"✅ استلم {interaction.user.mention} هذه التذكرة وأصبح مسؤولاً عنها بالكامل.",
+                description=f"\u2705 استلم {interaction.user.mention} هذه التذكرة وأصبح مسؤولاً عنها بالكامل.",
                 color=COLOR_CLAIM,
             )
         )
 
-        log = discord.Embed(title="✋ استلام تذكرة", color=COLOR_CLAIM, timestamp=datetime.datetime.now(datetime.timezone.utc))
+        log = discord.Embed(title="\u270b استلام تذكرة", color=COLOR_CLAIM, timestamp=datetime.datetime.now(datetime.timezone.utc))
         log.add_field(name="الروم", value=interaction.channel.mention)
         log.add_field(name="المستلم", value=interaction.user.mention)
         await send_log(interaction.guild, log)
 
     # ---------- استدعاء ----------
-    @discord.ui.button(label="استدعاء", emoji="🔔", style=discord.ButtonStyle.primary, custom_id="ticket:summon")
+    @discord.ui.button(label="استدعاء", emoji="\U0001f514", style=discord.ButtonStyle.primary, custom_id="ticket:summon")
     async def summon(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await can_manage(interaction):
             return
@@ -315,7 +315,7 @@ class TicketControls(discord.ui.View):
             return await deny(interaction, "صاحب التذكرة غير موجود في السيرفر.")
 
         dm = discord.Embed(
-            title="🔔 استدعاء لتذكرتك",
+            title="\U0001f514 استدعاء لتذكرتك",
             description=(
                 f"مرحباً {owner.mention}،\n"
                 f"وصلك استدعاء لتذكرتك في سيرفر **{interaction.guild.name}** لأنك لم تتفاعل معها.\n\n"
@@ -324,7 +324,7 @@ class TicketControls(discord.ui.View):
             color=COLOR_WARN,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
-        dm.add_field(name="🎫 التذكرة", value=interaction.channel.jump_url, inline=False)
+        dm.add_field(name="\U0001f3ab التذكرة", value=interaction.channel.jump_url, inline=False)
         dm.set_footer(text=interaction.guild.name)
 
         try:
@@ -333,25 +333,25 @@ class TicketControls(discord.ui.View):
             await interaction.channel.send(
                 content=owner.mention,
                 embed=discord.Embed(
-                    description="🔔 تم استدعاؤك لهذه التذكرة، تعال رد قبل أن تُغلق. (الخاص مقفل عندك)",
+                    description="\U0001f514 تم استدعاؤك لهذه التذكرة، تعال رد قبل أن تُغلق. (الخاص مقفل عندك)",
                     color=COLOR_WARN,
                 ),
             )
             return await interaction.response.send_message(
-                embed=discord.Embed(description="⚠️ الخاص مقفل عنده، تم تنبيهه داخل التذكرة.", color=COLOR_WARN),
+                embed=discord.Embed(description="\u26a0\ufe0f الخاص مقفل عنده، تم تنبيهه داخل التذكرة.", color=COLOR_WARN),
                 ephemeral=True,
             )
 
         await interaction.response.send_message(
-            embed=discord.Embed(description=f"✅ تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
+            embed=discord.Embed(description=f"\u2705 تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
             ephemeral=True,
         )
         await interaction.channel.send(
-            embed=discord.Embed(description=f"🔔 قام {interaction.user.mention} باستدعاء صاحب التذكرة.", color=COLOR_WARN)
+            embed=discord.Embed(description=f"\U0001f514 قام {interaction.user.mention} باستدعاء صاحب التذكرة.", color=COLOR_WARN)
         )
 
     # ---------- إنهاء ----------
-    @discord.ui.button(label="إنهاء", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="ticket:close")
+    @discord.ui.button(label="إنهاء", emoji="\U0001f512", style=discord.ButtonStyle.danger, custom_id="ticket:close")
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await can_manage(interaction):
             return
@@ -367,7 +367,7 @@ class TicketControls(discord.ui.View):
             await channel.set_permissions(owner, overwrite=discord.PermissionOverwrite(view_channel=False))
 
         embed = discord.Embed(
-            title="🔒 تم إنهاء التذكرة",
+            title="\U0001f512 تم إنهاء التذكرة",
             description=f"أُغلقت التذكرة بواسطة {interaction.user.mention}.\nالتحكم الآن للإدارة فقط.",
             color=COLOR_CLOSE,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
@@ -377,14 +377,14 @@ class TicketControls(discord.ui.View):
         # حفظ نسخة المحادثة في السجل
         transcript = await build_transcript(channel)
         log = discord.Embed(
-            title="🔒 إنهاء تذكرة",
+            title="\U0001f512 إنهاء تذكرة",
             description=f"تم إنهاء التذكرة بواسطة {interaction.user.mention}",
             color=COLOR_CLOSE,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
         log.add_field(name="الروم", value=f"#{channel.name}")
-        log.add_field(name="القسم", value=info["section"] or "—")
-        log.add_field(name="صاحب التذكرة", value=f"<@{info['owner']}>" if info["owner"] else "—")
+        log.add_field(name="القسم", value=info["section"] or "\u2014")
+        log.add_field(name="صاحب التذكرة", value=f"<@{info['owner']}>" if info["owner"] else "\u2014")
         if info["claimed"]:
             log.add_field(name="المستلم", value=f"<@{info['claimed']}>")
         await send_log(interaction.guild, log, transcript)
@@ -397,7 +397,7 @@ class ClosedControls(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="إعادة فتح", emoji="🔓", style=discord.ButtonStyle.success, custom_id="ticket:reopen")
+    @discord.ui.button(label="إعادة فتح", emoji="\U0001f513", style=discord.ButtonStyle.success, custom_id="ticket:reopen")
     async def reopen(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
@@ -416,7 +416,7 @@ class ClosedControls(discord.ui.View):
 
         await interaction.message.delete()
         embed = discord.Embed(
-            description=f"🔓 أعاد {interaction.user.mention} فتح التذكرة.",
+            description=f"\U0001f513 أعاد {interaction.user.mention} فتح التذكرة.",
             color=COLOR_OPEN,
         )
         await channel.send(
@@ -425,13 +425,13 @@ class ClosedControls(discord.ui.View):
             view=TicketControls(claimed=bool(info["claimed"])),
         )
 
-    @discord.ui.button(label="حذف التذكرة", emoji="🗑️", style=discord.ButtonStyle.danger, custom_id="ticket:delete")
+    @discord.ui.button(label="حذف التذكرة", emoji="\U0001f5d1\ufe0f", style=discord.ButtonStyle.danger, custom_id="ticket:delete")
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
 
         await interaction.response.send_message(
-            embed=discord.Embed(description="🗑️ سيتم حذف التذكرة خلال 5 ثوانٍ...", color=COLOR_CLOSE)
+            embed=discord.Embed(description="\U0001f5d1\ufe0f سيتم حذف التذكرة خلال 5 ثوانٍ...", color=COLOR_CLOSE)
         )
         await asyncio.sleep(5)
         await interaction.channel.delete(reason=f"حذف تذكرة بواسطة {interaction.user}")
@@ -452,7 +452,7 @@ class TicketBot(commands.Bot):
 
         # سيرفر ويب صغير عشان ريندر ما يوقف الخدمة
         app = web.Application()
-        app.router.add_get("/", lambda r: web.Response(text="Ticket bot is running ✅"))
+        app.router.add_get("/", lambda r: web.Response(text="Ticket bot is running \u2705"))
         runner = web.AppRunner(app)
         await runner.setup()
         await web.TCPSite(runner, "0.0.0.0", PORT).start()
@@ -466,8 +466,8 @@ class TicketBot(commands.Bot):
             await self.tree.sync()
 
     async def on_ready(self):
-        print(f"✅ البوت شغال باسم: {self.user} ({self.user.id})")
-        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="🎫 التذاكر"))
+        print(f"\u2705 البوت شغال باسم: {self.user} ({self.user.id})")
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="\U0001f3ab التذاكر"))
 
 
 bot = TicketBot()
@@ -489,21 +489,21 @@ async def panel(interaction: discord.Interaction):
         return await deny(interaction, f"ما لقيت الصورة `{PANEL_IMAGE}` بجانب main.py في جيت هوب.")
 
     embed = discord.Embed(
-        description="حياك الله 👋 في حال تبي تفتح تذكرة، شوف مبتغاك من القائمة بالأسفل واختره.",
+        description="حياك الله \U0001f44b في حال تبي تفتح تذكرة، شوف مبتغاك من القائمة بالأسفل واختره.",
         color=COLOR_MAIN,
     )
     embed.set_image(url=f"attachment://{PANEL_IMAGE}")
-    embed.set_footer(text=f"{interaction.guild.name} • نظام التذاكر")
+    embed.set_footer(text=f"{interaction.guild.name} \u2022 نظام التذاكر")
 
     await channel.send(
         embed=embed,
         file=discord.File(image_path, filename=PANEL_IMAGE),
         view=TicketPanel(),
     )
-    await interaction.response.send_message(f"✅ تم إرسال اللوحة في {channel.mention}", ephemeral=True)
+    await interaction.response.send_message(f"\u2705 تم إرسال اللوحة في {channel.mention}", ephemeral=True)
 
 
 if __name__ == "__main__":
     if not TOKEN:
-        raise SystemExit("❌ متغير DISCORD_TOKEN غير موجود في Environment Variables")
+        raise SystemExit("\u274c متغير DISCORD_TOKEN غير موجود في Environment Variables")
     bot.run(TOKEN)
