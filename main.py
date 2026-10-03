@@ -17,7 +17,7 @@ OWNER_ROLE_ID = 1425199301956599888                # آيدي رتبة الاو�
 ADMIN_ROLE_ID = 1465057908554334220                # آيدي رتبة ادمن تيكت
 PANEL_CHANNEL_ID = 1465041190163578972             # آيدي روم صورة التيكت (اللي تنرسل فيه اللوحة)
 CATEGORY_ID = 1465040666282168470                  # آيدي كاتيجوري التذاكر
-LOG_CHANNEL_ID = 1550546365338099803                                # آيدي روم السجل (اتركه 0 إذا ما تبيه)
+LOG_CHANNEL_ID = 1550546365338099803                               # آيدي روم السجل (اتركه 0 إذا ما تبيه)
 GUILD_ID = 1425195739591610451                     # آيدي السيرفر (يخلي الأوامر تظهر فوراً)
 
 # صورة اللوحة: ارفعها في جيت هوب بجانب main.py وبنفس الاسم
@@ -25,11 +25,11 @@ PANEL_IMAGE = "background.png"
 
 # أقسام التذاكر (تقدر تغيّر الأسماء أو تضيف أقسام من هنا)
 SECTIONS = [
-    {"label": "استفسار", "emoji": "", "desc": "اسأل عن أي شيء يخص السيرفر"},
+    {"label": "استفسار", "emoji": ", "desc": "اسأل عن أي شيء يخص السيرفر"},
     {"label": "طلب رول", "emoji": "", "desc": "اطلب رتبة أو رول"},
-    {"label": "الفعاليات", "emoji": "", "desc": "كل ما يخص الفعاليات"},
+    {"label": "الفعاليات", "emoji": 🎉", "desc": "كل ما يخص الفعاليات"},
     {"label": "شكوى على عضو", "emoji": "", "desc": "قدّم شكوى ضد عضو"},
-    {"label": "شكوى على اداري", "emoji": "", "desc": "قدّم شكوى ضد إداري"},
+    {"label": "شكوى على اداري", "emoji": "🛡️", "desc": "قدّم شكوى ضد إداري"},
     {"label": "طلب بروفايل كامل للبنت", "emoji": "", "desc": "طلب بروفايل كامل (بنات)"},
     {"label": "طلب بروفايل كامل للرجال", "emoji": "", "desc": "طلب بروفايل كامل (رجال)"},
 ]
@@ -195,8 +195,8 @@ class TicketModal(discord.ui.Modal, title="فتح تذكرة"):
             title="🎫 تذكرة دعم فني",
             description=(
                 f"أهلاً {user.mention} 👋\n"
-                "تم فتح تذكرتك بنجاح سيتم الرد عليك من فريق الدعم بأقرب وقت.\n"
-                " ننصحك بكتابة كل التفاصيل وإرفاق الصور إذا لزم الامر."
+                "تم فتح تذكرتك بنجاح، سيتم الرد عليك من فريق الدعم بأقرب وقت.\n"
+                "ننصحك بكتابة كل التفاصيل وإرفاق الصور إذا لزم."
             ),
             color=COLOR_OPEN,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
@@ -236,34 +236,28 @@ class SectionSelect(discord.ui.Select):
             discord.SelectOption(label=s["label"], value=str(i), emoji=s["emoji"], description=s["desc"])
             for i, s in enumerate(SECTIONS)
         ]
-        super().__init__(placeholder="اختر القسم المناسب...", options=options, min_values=1, max_values=1)
+        super().__init__(
+            placeholder="اختر خيار التذكرة",
+            options=options,
+            min_values=1,
+            max_values=1,
+            custom_id="ticket:section",
+        )
 
     async def callback(self, interaction: discord.Interaction):
         section = SECTIONS[int(self.values[0])]
         await interaction.response.send_modal(TicketModal(section))
-
-
-class SectionPickView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
-        self.add_item(SectionSelect())
+        # نرجّع القائمة لوضعها الأصلي عشان ما يبقى القسم محدد
+        try:
+            await interaction.message.edit(view=TicketPanel())
+        except discord.HTTPException:
+            pass
 
 
 class TicketPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-
-    @discord.ui.button(label="فتح تذكرة", emoji="🎫", style=discord.ButtonStyle.primary, custom_id="ticket:open")
-    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="📂 اختر القسم",
-                description="اختر القسم المناسب لطلبك من القائمة بالأسفل.",
-                color=COLOR_OPEN,
-            ),
-            view=SectionPickView(),
-            ephemeral=True,
-        )
+        self.add_item(SectionSelect())
 
 
 # ============================================================
@@ -349,7 +343,7 @@ class TicketControls(discord.ui.View):
             )
 
         await interaction.response.send_message(
-            embed=discord.Embed(description=f" تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
+            embed=discord.Embed(description=f"✅ تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
             ephemeral=True,
         )
         await interaction.channel.send(
@@ -495,7 +489,7 @@ async def panel(interaction: discord.Interaction):
         return await deny(interaction, f"ما لقيت الصورة `{PANEL_IMAGE}` بجانب main.py في جيت هوب.")
 
     embed = discord.Embed(
-        description="🎫 اضغط على الزر بالأسفل واختر القسم المناسب لفتح تذكرتك.",
+        description="حياك الله 👋 في حال تبي تفتح تذكرة، شوف مبتغاك من القائمة بالأسفل واختره.",
         color=COLOR_MAIN,
     )
     embed.set_image(url=f"attachment://{PANEL_IMAGE}")
