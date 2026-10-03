@@ -2,6 +2,7 @@ import os
 import io
 import asyncio
 import datetime
+import traceback
 
 import discord
 from discord import app_commands
@@ -235,14 +236,14 @@ async def create_ticket(interaction: discord.Interaction, section_index: int):
                 attach_files=True, embed_links=True,
             ),
             guild.me: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, manage_channels=True, manage_messages=True,
+                view_channel=True, send_messages=True,
                 read_message_history=True, embed_links=True, attach_files=True,
             ),
         }
         for role in admin_roles:
             overwrites[role] = discord.PermissionOverwrite(
                 view_channel=True, send_messages=True, read_message_history=True,
-                attach_files=True, embed_links=True, manage_messages=True,
+                attach_files=True, embed_links=True,
             )
 
         channel = await guild.create_text_channel(
@@ -253,34 +254,42 @@ async def create_ticket(interaction: discord.Interaction, section_index: int):
             reason=f"تذكرة جديدة من {user}",
         )
 
-    embed = discord.Embed(color=COLOR_TICKET)
-    embed.add_field(name=f"[{E_USER}] : مالك التذكرة", value=user.mention, inline=False)
-    embed.add_field(name=f"[{E_SHIELD}] : مشرفي التذاكر", value=" ".join(r.mention for r in admin_roles), inline=False)
-    embed.add_field(name=f"[{E_CAL}] : تاريخ التذكرة", value=f"<t:{int(now_utc().timestamp())}:F>", inline=False)
-    embed.add_field(name=f"[{E_NUM}] : رقم التذكرة", value=f"```{number}```", inline=False)
-    embed.add_field(name=f"[{E_Q}] : قسم التذكرة", value=f"```{section['label']}```", inline=False)
-    embed.set_thumbnail(url=user.display_avatar.url)
-
-    banner_path = os.path.join(BASE_DIR, section["banner"])
-    if not os.path.exists(banner_path):
-        banner_path = os.path.join(BASE_DIR, PANEL_IMAGE)
-    file = None
-    if os.path.exists(banner_path):
-        file = discord.File(banner_path, filename="banner.png")
-        embed.set_image(url="attachment://banner.png")
-
-    content = f"{user.mention} | " + " | ".join(r.mention for r in admin_roles)
-    msg = await channel.send(
-        content=content,
-        embed=embed,
-        file=file,
-        view=TicketControls(),
-        allowed_mentions=discord.AllowedMentions(roles=True, users=True),
-    )
     try:
-        await msg.pin()
-    except discord.HTTPException:
-        pass
+        embed = discord.Embed(color=COLOR_TICKET)
+        embed.add_field(name=f"[{E_USER}] : مالك التذكرة", value=user.mention, inline=False)
+        embed.add_field(name=f"[{E_SHIELD}] : مشرفي التذاكر", value=" ".join(r.mention for r in admin_roles), inline=False)
+        embed.add_field(name=f"[{E_CAL}] : تاريخ التذكرة", value=f"<t:{int(now_utc().timestamp())}:F>", inline=False)
+        embed.add_field(name=f"[{E_NUM}] : رقم التذكرة", value=f"```{number}```", inline=False)
+        embed.add_field(name=f"[{E_Q}] : قسم التذكرة", value=f"```{section['label']}```", inline=False)
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        banner_path = os.path.join(BASE_DIR, section["banner"])
+        if not os.path.exists(banner_path):
+            banner_path = os.path.join(BASE_DIR, PANEL_IMAGE)
+        file = None
+        if os.path.exists(banner_path):
+            file = discord.File(banner_path, filename="banner.png")
+            embed.set_image(url="attachment://banner.png")
+
+        content = f"{user.mention} | " + " | ".join(r.mention for r in admin_roles)
+        msg = await channel.send(
+            content=content,
+            embed=embed,
+            file=file,
+            view=TicketControls(),
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True),
+        )
+        try:
+            await msg.pin()
+        except discord.HTTPException:
+            pass
+
+    except Exception:
+        try:
+            await channel.delete(reason="فشل إنشاء التذكرة")
+        except discord.HTTPException:
+            pass
+        raise
 
     await interaction.followup.send(f"تم إنشاء التذكرة: {channel.mention}", ephemeral=True)
 
@@ -309,14 +318,23 @@ class SectionSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        index = int(self.values[0])
-        # نرجّع القائمة لوضعها الأصلي
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await interaction.message.edit(view=TicketPanel())
-        except discord.HTTPException:
-            pass
-        await create_ticket(interaction, index)
+            await create_ticket(interaction, int(self.values[0]))
+        except discord.Forbidden:
+            traceback.print_exc()
+            await interaction.followup.send(
+                f"{E_NO} البوت ما عنده صلاحيات كافية لفتح التذكرة.\n"
+                "أعطه صلاحية **Administrator** (أو: Manage Channels + Manage Roles + View Channels + "
+                "Send Messages + Manage Messages) وتأكد إن رتبته مرفوعة فوق.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(
+                f"{E_NO} صار خطأ أثناء فتح التذكرة:\n`{type(e).__name__}: {e}`",
+                ephemeral=True,
+            )
 
 
 class TicketPanel(discord.ui.View):
