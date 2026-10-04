@@ -15,7 +15,7 @@ from aiohttp import web
 TOKEN = os.getenv("DISCORD_TOKEN")                  # التوكن من Environment Variables في ريندر
 
 OWNER_ROLE_ID = 1425199301956599888                  # آيدي رتبة الاونر (يستخدم أمر /panel)
-ADMIN_ROLE_IDS = [1465057908554334220,1425199301956599888]               # آيدي رتبة (أو رتب) ادمن تيكت. مثال لرتبتين: [111111, 222222]
+ADMIN_ROLE_IDS = [1465057908554334220, 1425199301956599888]               # آيدي رتبة (أو رتب) ادمن تيكت. مثال لرتبتين: [111111, 222222]
 PANEL_CHANNEL_ID = 1465041190163578972               # آيدي روم صورة التيكت (اللي تنرسل فيه اللوحة)
 CATEGORY_ID = 1465040666282168470                    # آيدي كاتيجوري التذاكر
 LOG_CHANNEL_ID = 1550546365338099803                                  # آيدي روم السجل (اتركه 0 إذا ما تبيه)
@@ -396,7 +396,7 @@ class TicketControls(discord.ui.View):
             self.claim.label = "تم الاستلام"
 
     # ---------- استلام ----------
-    @discord.ui.button(label="استلام", emoji=E_BRIEFCASE, style=discord.ButtonStyle.secondary, custom_id="ticket:claim")
+    @discord.ui.button(label="استلام", style=discord.ButtonStyle.secondary, custom_id="ticket:claim")
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
@@ -421,13 +421,13 @@ class TicketControls(discord.ui.View):
         await send_log(interaction.guild, log)
 
     # ---------- خيارات التذكرة ----------
-    @discord.ui.button(label="خيارات التذكرة", emoji=E_OPTIONS, style=discord.ButtonStyle.secondary, custom_id="ticket:options")
+    @discord.ui.button(label="خيارات التذكرة", style=discord.ButtonStyle.secondary, custom_id="ticket:options")
     async def options_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
         await interaction.response.send_message(
             embed=discord.Embed(
-                title=f"{E_OPTIONS} خيارات التذكرة",
+                title="خيارات التذكرة",
                 description="اختر الإجراء المطلوب:",
                 color=COLOR_TICKET,
             ),
@@ -441,7 +441,7 @@ class OptionsView(discord.ui.View):
         super().__init__(timeout=120)
 
     # ---------- استدعاء ----------
-    @discord.ui.button(label="استدعاء", emoji=E_BELL, style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="استدعاء", emoji=E_BELL, style=discord.ButtonStyle.secondary)
     async def summon(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await can_manage(interaction):
             return
@@ -488,7 +488,7 @@ class OptionsView(discord.ui.View):
         )
 
     # ---------- إنهاء ----------
-    @discord.ui.button(label="إنهاء", emoji=E_LOCK, style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="إنهاء", emoji=E_LOCK, style=discord.ButtonStyle.secondary)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await can_manage(interaction):
             return
