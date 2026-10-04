@@ -35,8 +35,6 @@ SECTIONS = [
     {"label": "الفعاليات"},
     {"label": "شكوى على عضو"},
     {"label": "شكوى على اداري"},
-    {"label": "طلب بروفايل كامل للبنت"},
-    {"label": "طلب بروفايل كامل للرجال"},
 ]
 for _i, _s in enumerate(SECTIONS):
     _s["banner"] = f"banner_{_i + 1}.png"
