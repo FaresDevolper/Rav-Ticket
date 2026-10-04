@@ -363,7 +363,7 @@ async def close_ticket(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title=f"{E_LOCK} تم إنهاء التذكرة",
-        description=f"أُغلقت التذكرة بواسطة {interaction.user.mention}.\nالتحكم الآن للإدارة فقط.",
+        description=f"أُغلقت التذكرة بواسطة {interaction.user.mention}.\nالتحكم الآن للإدارة فقط .",
         color=COLOR_CLOSE,
         timestamp=now_utc(),
     )
@@ -393,13 +393,13 @@ class TicketControls(discord.ui.View):
         super().__init__(timeout=None)
         if claimed:
             self.claim.disabled = True
-            self.claim.label = "تم الاستلام"
+            self.claim.label = " تم الاستلام "
 
     # ---------- استلام ----------
     @discord.ui.button(label="استلام", style=discord.ButtonStyle.secondary, custom_id="ticket:claim")
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
-            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
+            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط .")
 
         info = read_topic(interaction.channel)
         if info["claimed"]:
@@ -410,7 +410,7 @@ class TicketControls(discord.ui.View):
 
         await interaction.channel.send(
             embed=discord.Embed(
-                description=f"{E_OK} استلم {interaction.user.mention} هذه التذكرة وأصبح مسؤولاً عنها بالكامل.",
+                description=f"{E_OK} استلم {interaction.user.mention} هذه التذكرة وأصبح مسؤولاً عنها بالكامل .",
                 color=COLOR_CLAIM,
             )
         )
@@ -424,7 +424,7 @@ class TicketControls(discord.ui.View):
     @discord.ui.button(label="خيارات التذكرة", style=discord.ButtonStyle.secondary, custom_id="ticket:options")
     async def options_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
-            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
+            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط .")
         await interaction.response.send_message(
             embed=discord.Embed(
                 title="خيارات التذكرة",
@@ -449,14 +449,14 @@ class OptionsView(discord.ui.View):
         info = read_topic(interaction.channel)
         owner = await get_member(interaction.guild, info["owner"]) if info["owner"] else None
         if not owner:
-            return await deny(interaction, "صاحب التذكرة غير موجود في السيرفر.")
+            return await deny(interaction, "صاحب التذكرة غير موجود في السيرفر .")
 
         dm = discord.Embed(
             title=f"{E_BELL} استدعاء لتذكرتك",
             description=(
                 f"مرحباً {owner.mention}،\n"
-                f"وصلك استدعاء لتذكرتك في سيرفر **{interaction.guild.name}** لأنك لم تتفاعل معها.\n\n"
-                "تعال رد على التذكرة بأقرب وقت، وإلا سيتم **إغلاقها قريباً**."
+                f"وصلك استدعاء لتذكرتك في سيرفر **{interaction.guild.name}** لأنك لم تتفاعل معها .\n\n"
+                "تعال رد على التذكرة بأقرب وقت، وإلا سيتم ** إغلاقها قريباً **."
             ),
             color=COLOR_WARN,
             timestamp=now_utc(),
@@ -470,7 +470,7 @@ class OptionsView(discord.ui.View):
             await interaction.channel.send(
                 content=owner.mention,
                 embed=discord.Embed(
-                    description=f"{E_BELL} تم استدعاؤك لهذه التذكرة، تعال رد قبل أن تُغلق. (الخاص مقفل عندك)",
+                    description=f"{E_BELL} تم استدعاؤك لهذه التذكرة، تعال رد قبل أن تُغلق . (الخاص مقفل عندك) ",
                     color=COLOR_WARN,
                 ),
             )
@@ -507,7 +507,7 @@ class ClosedControls(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="إعادة فتح", emoji=E_UNLOCK, style=discord.ButtonStyle.success, custom_id="ticket:reopen")
+    @discord.ui.button(label="إعادة فتح", emoji=E_UNLOCK, style=discord.ButtonStyle.secondary, custom_id="ticket:reopen")
     async def reopen(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
@@ -545,7 +545,7 @@ class ClosedControls(discord.ui.View):
             ),
         )
 
-    @discord.ui.button(label="حذف التذكرة", emoji=E_TRASH, style=discord.ButtonStyle.danger, custom_id="ticket:delete")
+    @discord.ui.button(label="حذف التذكرة", emoji=E_TRASH, style=discord.ButtonStyle.secondary, custom_id="ticket:delete")
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
