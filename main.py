@@ -21,6 +21,14 @@ CATEGORY_ID = 1465040666282168470                    # آيدي كاتيجوري
 LOG_CHANNEL_ID = 1550546365338099803                                  # آيدي روم السجل (اتركه 0 إذا ما تبيه)
 GUILD_ID = 1425195739591610451                       # آيدي السيرفر (يخلي الأوامر تظهر فوراً)
 
+TICKET_NAME_PREFIX = "تذكرة"                         # بداية اسم روم التذكرة (يصير الاسم: تذكرة ثم الرقم)
+
+# ---------- الرومات الصوتية المؤقتة (Temp Voice) ----------
+VOICE_CREATE_CHANNEL_ID = 1556472549280587917                         # آيدي الروم الصوتي اللي يدخله العضو عشان ينفتح له روم خاص
+VOICE_PANEL_CHANNEL_ID = 1556472672207114240                          # آيدي روم لوحة التحكم (لازم يكون غير روم لوحة التذاكر)
+VOICE_PANEL_IMAGE = "voice_panel.png"               # صورة اللوحة (ارفعها في جيت هوب بنفس الاسم)
+VOICE_PANEL_TITLE = "Rav - Temp Voice"              # عنوان اللوحة
+
 START_TICKET_NUMBER = 114                             # رقم أول تذكرة
 
 # صورة اللوحة: ارفعها في جيت هوب بجانب main.py وبنفس الاسم
@@ -54,24 +62,6 @@ COLOR_CLAIM = 0x57F287
 COLOR_CLOSE = 0xED4245
 COLOR_WARN = 0xFEE75C
 
-# الإيموجي (مكتوبة كأكواد عشان ما تخرب مع النسخ)
-E_TICKET = "\U0001f3ab"
-E_USER = "\U0001f464"
-E_SHIELD = "\U0001f6e1\ufe0f"
-E_CAL = "\U0001f4c5"
-E_NUM = "\U0001f522"
-E_Q = "\u2753"
-E_OPTIONS = "\U0001f5c3\ufe0f"
-E_BRIEFCASE = "\U0001f4bc"
-E_BELL = "\U0001f514"
-E_LOCK = "\U0001f512"
-E_UNLOCK = "\U0001f513"
-E_TRASH = "\U0001f5d1\ufe0f"
-E_OK = "\u2705"
-E_NO = "\u26d4"
-E_WARN = "\u26a0\ufe0f"
-E_FOLDER = "\U0001f4c2"
-E_WAVE = "\U0001f44b"
 
 _ticket_lock = asyncio.Lock()
 
@@ -186,7 +176,7 @@ async def find_main_message(channel: discord.TextChannel):
 
 
 async def deny(interaction: discord.Interaction, text: str):
-    embed = discord.Embed(description=f"{E_NO} {text}", color=COLOR_CLOSE)
+    embed = discord.Embed(description=f"{text}", color=COLOR_CLOSE)
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
@@ -245,7 +235,7 @@ async def create_ticket(interaction: discord.Interaction, section_index: int):
             )
 
         channel = await guild.create_text_channel(
-            name=f"{E_TICKET}\u30fb{number}",
+            name=f"{TICKET_NAME_PREFIX}\u30fb{number}",
             category=category,
             overwrites=overwrites,
             topic=f"owner={user.id};claimed=0;number={number};section={section['label']}",
@@ -254,11 +244,11 @@ async def create_ticket(interaction: discord.Interaction, section_index: int):
 
     try:
         embed = discord.Embed(color=COLOR_TICKET)
-        embed.add_field(name=f"[{E_USER}] : مالك التذكرة", value=user.mention, inline=False)
-        embed.add_field(name=f"[{E_SHIELD}] : مشرفي التذاكر", value=" ".join(r.mention for r in admin_roles), inline=False)
-        embed.add_field(name=f"[{E_CAL}] : تاريخ التذكرة", value=f"<t:{int(now_utc().timestamp())}:F>", inline=False)
-        embed.add_field(name=f"[{E_NUM}] : رقم التذكرة", value=f"```{number}```", inline=False)
-        embed.add_field(name=f"[{E_Q}] : قسم التذكرة", value=f"```{section['label']}```", inline=False)
+        embed.add_field(name=f"مالك التذكرة", value=user.mention, inline=False)
+        embed.add_field(name=f"مشرفي التذاكر", value=" ".join(r.mention for r in admin_roles), inline=False)
+        embed.add_field(name=f"تاريخ التذكرة", value=f"<t:{int(now_utc().timestamp())}:F>", inline=False)
+        embed.add_field(name=f"رقم التذكرة", value=f"```{number}```", inline=False)
+        embed.add_field(name=f"قسم التذكرة", value=f"```{section['label']}```", inline=False)
         embed.set_thumbnail(url=user.display_avatar.url)
 
         banner_path = os.path.join(BASE_DIR, section["banner"])
@@ -291,7 +281,7 @@ async def create_ticket(interaction: discord.Interaction, section_index: int):
 
     await interaction.followup.send(f"تم إنشاء التذكرة: {channel.mention}", ephemeral=True)
 
-    log = discord.Embed(title=f"{E_FOLDER} تذكرة جديدة", color=COLOR_OPEN, timestamp=now_utc())
+    log = discord.Embed(title=f"تذكرة جديدة", color=COLOR_OPEN, timestamp=now_utc())
     log.add_field(name="الروم", value=channel.mention)
     log.add_field(name="صاحب التذكرة", value=user.mention)
     log.add_field(name="القسم", value=section["label"])
@@ -322,7 +312,7 @@ class SectionSelect(discord.ui.Select):
         except discord.Forbidden:
             traceback.print_exc()
             await interaction.followup.send(
-                f"{E_NO} البوت ما عنده صلاحيات كافية لفتح التذكرة.\n"
+                f"البوت ما عنده صلاحيات كافية لفتح التذكرة.\n"
                 "أعطه صلاحية **Administrator** (أو: Manage Channels + Manage Roles + View Channels + "
                 "Send Messages + Manage Messages) وتأكد إن رتبته مرفوعة فوق.",
                 ephemeral=True,
@@ -330,7 +320,7 @@ class SectionSelect(discord.ui.Select):
         except Exception as e:
             traceback.print_exc()
             await interaction.followup.send(
-                f"{E_NO} صار خطأ أثناء فتح التذكرة:\n`{type(e).__name__}: {e}`",
+                f"صار خطأ أثناء فتح التذكرة:\n`{type(e).__name__}: {e}`",
                 ephemeral=True,
             )
 
@@ -362,8 +352,8 @@ async def close_ticket(interaction: discord.Interaction):
             pass
 
     embed = discord.Embed(
-        title=f"{E_LOCK} تم إنهاء التذكرة",
-        description=f"أُغلقت التذكرة بواسطة {interaction.user.mention}.\nالتحكم الآن للإدارة فقط .",
+        title=f"تم إنهاء التذكرة",
+        description=f"أُغلقت التذكرة بواسطة {interaction.user.mention}.\nالتحكم الآن للإدارة فقط.",
         color=COLOR_CLOSE,
         timestamp=now_utc(),
     )
@@ -371,7 +361,7 @@ async def close_ticket(interaction: discord.Interaction):
 
     transcript = await build_transcript(channel)
     log = discord.Embed(
-        title=f"{E_LOCK} إنهاء تذكرة",
+        title=f"إنهاء تذكرة",
         description=f"تم إنهاء التذكرة بواسطة {interaction.user.mention}",
         color=COLOR_CLOSE,
         timestamp=now_utc(),
@@ -393,13 +383,13 @@ class TicketControls(discord.ui.View):
         super().__init__(timeout=None)
         if claimed:
             self.claim.disabled = True
-            self.claim.label = " تم الاستلام "
+            self.claim.label = "تم الاستلام"
 
     # ---------- استلام ----------
     @discord.ui.button(label="استلام", style=discord.ButtonStyle.secondary, custom_id="ticket:claim")
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
-            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط .")
+            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
 
         info = read_topic(interaction.channel)
         if info["claimed"]:
@@ -410,12 +400,12 @@ class TicketControls(discord.ui.View):
 
         await interaction.channel.send(
             embed=discord.Embed(
-                description=f"{E_OK} استلم {interaction.user.mention} هذه التذكرة وأصبح مسؤولاً عنها بالكامل .",
+                description=f"استلم {interaction.user.mention} هذه التذكرة وأصبح مسؤولاً عنها بالكامل.",
                 color=COLOR_CLAIM,
             )
         )
 
-        log = discord.Embed(title=f"{E_BRIEFCASE} استلام تذكرة", color=COLOR_CLAIM, timestamp=now_utc())
+        log = discord.Embed(title=f"استلام تذكرة", color=COLOR_CLAIM, timestamp=now_utc())
         log.add_field(name="الروم", value=interaction.channel.mention)
         log.add_field(name="المستلم", value=interaction.user.mention)
         await send_log(interaction.guild, log)
@@ -424,7 +414,7 @@ class TicketControls(discord.ui.View):
     @discord.ui.button(label="خيارات التذكرة", style=discord.ButtonStyle.secondary, custom_id="ticket:options")
     async def options_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
-            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط .")
+            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
         await interaction.response.send_message(
             embed=discord.Embed(
                 title="خيارات التذكرة",
@@ -441,7 +431,7 @@ class OptionsView(discord.ui.View):
         super().__init__(timeout=120)
 
     # ---------- استدعاء ----------
-    @discord.ui.button(label="استدعاء", emoji=E_BELL, style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="استدعاء", style=discord.ButtonStyle.secondary)
     async def summon(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await can_manage(interaction):
             return
@@ -449,19 +439,19 @@ class OptionsView(discord.ui.View):
         info = read_topic(interaction.channel)
         owner = await get_member(interaction.guild, info["owner"]) if info["owner"] else None
         if not owner:
-            return await deny(interaction, "صاحب التذكرة غير موجود في السيرفر .")
+            return await deny(interaction, "صاحب التذكرة غير موجود في السيرفر.")
 
         dm = discord.Embed(
-            title=f"{E_BELL} استدعاء لتذكرتك",
+            title=f"استدعاء لتذكرتك",
             description=(
                 f"مرحباً {owner.mention}،\n"
-                f"وصلك استدعاء لتذكرتك في سيرفر **{interaction.guild.name}** لأنك لم تتفاعل معها .\n\n"
-                "تعال رد على التذكرة بأقرب وقت، وإلا سيتم ** إغلاقها قريباً **."
+                f"وصلك استدعاء لتذكرتك في سيرفر **{interaction.guild.name}** لأنك لم تتفاعل معها.\n\n"
+                "تعال رد على التذكرة بأقرب وقت، وإلا سيتم **إغلاقها قريباً**."
             ),
             color=COLOR_WARN,
             timestamp=now_utc(),
         )
-        dm.add_field(name=f"{E_TICKET} التذكرة", value=interaction.channel.jump_url, inline=False)
+        dm.add_field(name=f"التذكرة", value=interaction.channel.jump_url, inline=False)
         dm.set_footer(text=interaction.guild.name)
 
         try:
@@ -470,32 +460,32 @@ class OptionsView(discord.ui.View):
             await interaction.channel.send(
                 content=owner.mention,
                 embed=discord.Embed(
-                    description=f"{E_BELL} تم استدعاؤك لهذه التذكرة، تعال رد قبل أن تُغلق . (الخاص مقفل عندك) ",
+                    description=f"تم استدعاؤك لهذه التذكرة، تعال رد قبل أن تُغلق. (الخاص مقفل عندك)",
                     color=COLOR_WARN,
                 ),
             )
             return await interaction.response.send_message(
-                embed=discord.Embed(description=f"{E_WARN} الخاص مقفل عنده، تم تنبيهه داخل التذكرة.", color=COLOR_WARN),
+                embed=discord.Embed(description=f"الخاص مقفل عنده، تم تنبيهه داخل التذكرة.", color=COLOR_WARN),
                 ephemeral=True,
             )
 
         await interaction.response.send_message(
-            embed=discord.Embed(description=f"{E_OK} تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
+            embed=discord.Embed(description=f"تم إرسال الاستدعاء إلى {owner.mention} في الخاص.", color=COLOR_CLAIM),
             ephemeral=True,
         )
         await interaction.channel.send(
-            embed=discord.Embed(description=f"{E_BELL} قام {interaction.user.mention} باستدعاء صاحب التذكرة.", color=COLOR_WARN)
+            embed=discord.Embed(description=f"قام {interaction.user.mention} باستدعاء صاحب التذكرة.", color=COLOR_WARN)
         )
 
     # ---------- إنهاء ----------
-    @discord.ui.button(label="إنهاء", emoji=E_LOCK, style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="إنهاء", style=discord.ButtonStyle.secondary)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await can_manage(interaction):
             return
         await interaction.response.defer()
         await close_ticket(interaction)
         await interaction.edit_original_response(
-            embed=discord.Embed(description=f"{E_OK} تم إنهاء التذكرة.", color=COLOR_CLAIM),
+            embed=discord.Embed(description=f"تم إنهاء التذكرة.", color=COLOR_CLAIM),
             view=None,
         )
 
@@ -507,7 +497,7 @@ class ClosedControls(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="إعادة فتح", emoji=E_UNLOCK, style=discord.ButtonStyle.secondary, custom_id="ticket:reopen")
+    @discord.ui.button(label="إعادة فتح", style=discord.ButtonStyle.secondary, custom_id="ticket:reopen")
     async def reopen(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
@@ -540,21 +530,310 @@ class ClosedControls(discord.ui.View):
         await channel.send(
             content=owner.mention if owner else None,
             embed=discord.Embed(
-                description=f"{E_UNLOCK} أعاد {interaction.user.mention} فتح التذكرة.",
+                description=f"أعاد {interaction.user.mention} فتح التذكرة.",
                 color=COLOR_OPEN,
             ),
         )
 
-    @discord.ui.button(label="حذف التذكرة", emoji=E_TRASH, style=discord.ButtonStyle.secondary, custom_id="ticket:delete")
+    @discord.ui.button(label="حذف التذكرة", style=discord.ButtonStyle.secondary, custom_id="ticket:delete")
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction.user):
             return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
 
         await interaction.response.send_message(
-            embed=discord.Embed(description=f"{E_TRASH} سيتم حذف التذكرة خلال 5 ثوانٍ...", color=COLOR_CLOSE)
+            embed=discord.Embed(description=f"سيتم حذف التذكرة خلال 5 ثوانٍ...", color=COLOR_CLOSE)
         )
         await asyncio.sleep(5)
         await interaction.channel.delete(reason=f"حذف تذكرة بواسطة {interaction.user}")
+
+
+# ============================================================
+#  الرومات الصوتية المؤقتة (Temp Voice)
+# ============================================================
+temp_rooms: dict = {}   # آيدي الروم -> آيدي المالك
+
+VOICE_BUTTONS = [
+    ("rename", "تغيير الاسم", 0), ("limit", "تحديد العدد", 0), ("kick", "طرد", 0),
+    ("transfer", "نقل الملكية", 0), ("delete", "حذف الروم", 0),
+    ("lock", "قفل", 1), ("unlock", "فتح", 1), ("hide", "إخفاء", 1),
+    ("show", "إظهار", 1), ("region", "الريجن", 1),
+    ("mute", "ميوت", 2), ("unmute", "فك الميوت", 2), ("ban", "منع", 2),
+    ("allow", "سماح", 2), ("invite", "دعوة", 2),
+]
+
+TARGET_PROMPTS = {
+    "kick": "اختر العضو المراد طرده:",
+    "transfer": "اختر العضو الذي تريد نقل الملكية إليه:",
+    "mute": "اختر العضو المراد ميوته:",
+    "unmute": "اختر العضو المراد فك الميوت عنه:",
+    "ban": "اختر العضو المراد منعه:",
+    "allow": "اختر العضو المراد السماح له:",
+    "invite": "اختر العضو المراد دعوته:",
+}
+
+PERM_ACTIONS = {
+    "lock": ({"connect": False}, "تم قفل الروم."),
+    "unlock": ({"connect": None}, "تم فتح الروم."),
+    "hide": ({"view_channel": False}, "تم إخفاء الروم."),
+    "show": ({"view_channel": None}, "تم إظهار الروم."),
+}
+
+REGIONS = [
+    ("افتراضي", "auto"), ("البرازيل", "brazil"), ("الهند", "india"), ("اليابان", "japan"),
+    ("سنغافورة", "singapore"), ("أمريكا - الشرق", "us-east"), ("أمريكا - الغرب", "us-west"),
+]
+
+
+def owner_from_overwrites(channel):
+    """مالك الروم = العضو اللي عنده صلاحية إدارة القناة في الروم (يرجع بعد إعادة التشغيل)"""
+    for target, ow in channel.overwrites.items():
+        if isinstance(target, discord.Role):
+            continue
+        if ow.manage_channels:
+            return target.id
+    return None
+
+
+async def say(interaction: discord.Interaction, text: str):
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True)
+    else:
+        await interaction.response.send_message(text, ephemeral=True)
+
+
+async def get_owned_room(interaction: discord.Interaction):
+    voice = getattr(interaction.user, "voice", None)
+    room = voice.channel if voice else None
+    if room is None or room.id not in temp_rooms:
+        await deny(interaction, "يجب أن تكون داخل رومك الصوتي.")
+        return None
+    if temp_rooms[room.id] != interaction.user.id:
+        await deny(interaction, "أنت لست مالك هذا الروم.")
+        return None
+    return room
+
+
+async def run_target_action(action: str, interaction: discord.Interaction, room, target) -> str:
+    owner = interaction.user
+    if not isinstance(target, discord.Member):
+        return "هذا الشخص ليس في السيرفر."
+    if target.bot:
+        return "لا يمكن تنفيذ هذا الإجراء على بوت."
+    if target.id == owner.id:
+        return "لا يمكنك تنفيذ هذا الإجراء على نفسك."
+
+    in_room = bool(target.voice and target.voice.channel and target.voice.channel.id == room.id)
+
+    if action == "kick":
+        if not in_room:
+            return "العضو ليس داخل رومك."
+        await target.move_to(None)
+        return f"تم طرد {target.mention}."
+    if action == "mute":
+        await room.set_permissions(target, speak=False)
+        return f"تم ميوت {target.mention} في رومك."
+    if action == "unmute":
+        await room.set_permissions(target, speak=None)
+        return f"تم فك الميوت عن {target.mention}."
+    if action == "ban":
+        await room.set_permissions(target, connect=False)
+        if in_room:
+            await target.move_to(None)
+        return f"تم منع {target.mention} من دخول رومك."
+    if action == "allow":
+        await room.set_permissions(target, connect=True)
+        return f"تم السماح لـ {target.mention} بدخول رومك."
+    if action == "invite":
+        await room.set_permissions(target, connect=True)
+        try:
+            await target.send(f"تمت دعوتك إلى روم صوتي من {owner.display_name}\n{room.jump_url}")
+        except discord.HTTPException:
+            return "تم السماح له بالدخول، لكن خاصه مقفل فما وصلته الدعوة."
+        return "تم إرسال الدعوة."
+    if action == "transfer":
+        await room.set_permissions(target, manage_channels=True, connect=True, speak=True)
+        await room.set_permissions(owner, overwrite=None)
+        temp_rooms[room.id] = target.id
+        return f"تم نقل ملكية الروم إلى {target.mention}."
+    return "إجراء غير معروف."
+
+
+class TargetSelect(discord.ui.UserSelect):
+    def __init__(self, action: str):
+        super().__init__(placeholder="اختر العضو", min_values=1, max_values=1)
+        self.action = action
+
+    async def callback(self, interaction: discord.Interaction):
+        room = await get_owned_room(interaction)
+        if not room:
+            return
+        target = self.values[0]
+        await interaction.response.defer()
+        try:
+            text = await run_target_action(self.action, interaction, room, target)
+        except discord.HTTPException:
+            traceback.print_exc()
+            text = "تعذّر تنفيذ الإجراء، تأكد من صلاحيات البوت."
+        await interaction.edit_original_response(content=text, view=None)
+
+
+class TargetView(discord.ui.View):
+    def __init__(self, action: str):
+        super().__init__(timeout=120)
+        self.add_item(TargetSelect(action))
+
+
+class RegionSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="اختر الريجن",
+            options=[discord.SelectOption(label=l, value=v) for l, v in REGIONS],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        room = await get_owned_room(interaction)
+        if not room:
+            return
+        value = self.values[0]
+        await interaction.response.defer()
+        await room.edit(rtc_region=None if value == "auto" else value)
+        await interaction.edit_original_response(content="تم تغيير الريجن.", view=None)
+
+
+class RegionView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(RegionSelect())
+
+
+class RenameModal(discord.ui.Modal, title="تغيير اسم الروم"):
+    new_name = discord.ui.TextInput(label="اسم الروم الجديد", max_length=100, required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        room = await get_owned_room(interaction)
+        if not room:
+            return
+        await interaction.response.defer(ephemeral=True)
+        await room.edit(name=self.new_name.value)
+        await interaction.followup.send(f"تم تغيير الاسم إلى {self.new_name.value}", ephemeral=True)
+
+
+class LimitModal(discord.ui.Modal, title="تحديد عدد الروم"):
+    number = discord.ui.TextInput(label="العدد (اكتب 0 لإلغاء الحد)", placeholder="مثال: 5", max_length=2, required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        room = await get_owned_room(interaction)
+        if not room:
+            return
+        try:
+            n = int(self.number.value)
+        except ValueError:
+            return await deny(interaction, "اكتب رقماً صحيحاً.")
+        n = max(0, min(99, n))
+        await interaction.response.defer(ephemeral=True)
+        await room.edit(user_limit=n)
+        await interaction.followup.send("تم تحديد العدد." if n else "تم إلغاء حد العدد.", ephemeral=True)
+
+
+async def handle_voice_action(interaction: discord.Interaction, key: str):
+    room = await get_owned_room(interaction)
+    if not room:
+        return
+
+    if key == "rename":
+        return await interaction.response.send_modal(RenameModal())
+    if key == "limit":
+        return await interaction.response.send_modal(LimitModal())
+    if key == "region":
+        return await interaction.response.send_message("اختر الريجن:", view=RegionView(), ephemeral=True)
+    if key in TARGET_PROMPTS:
+        return await interaction.response.send_message(TARGET_PROMPTS[key], view=TargetView(key), ephemeral=True)
+    if key in PERM_ACTIONS:
+        perms, text = PERM_ACTIONS[key]
+        await interaction.response.defer(ephemeral=True)
+        await room.set_permissions(interaction.guild.default_role, **perms)
+        return await interaction.followup.send(text, ephemeral=True)
+    if key == "delete":
+        await say(interaction, "تم حذف الروم.")
+        temp_rooms.pop(room.id, None)
+        await room.delete(reason=f"حذف الروم بواسطة {interaction.user}")
+
+
+class VoiceButton(discord.ui.Button):
+    def __init__(self, key: str, label: str, row: int):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, custom_id=f"vc:{key}", row=row)
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            await handle_voice_action(interaction, self.key)
+        except Exception:
+            traceback.print_exc()
+            try:
+                await say(interaction, "صار خطأ، تأكد من صلاحيات البوت وحاول مرة ثانية.")
+            except discord.HTTPException:
+                pass
+
+
+class VoicePanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key, label, row in VOICE_BUTTONS:
+            self.add_item(VoiceButton(key, label, row))
+
+
+async def create_temp_room(member: discord.Member, create_channel: discord.VoiceChannel):
+    guild = member.guild
+    room = await guild.create_voice_channel(
+        name=member.display_name[:100],
+        category=create_channel.category,
+        reason=f"روم مؤقت لـ {member}",
+    )
+    temp_rooms[room.id] = member.id
+    await room.set_permissions(member, manage_channels=True, connect=True, speak=True)
+    try:
+        await member.move_to(room)
+    except discord.HTTPException:
+        temp_rooms.pop(room.id, None)
+        await room.delete(reason="تعذر نقل العضو")
+
+
+async def recover_temp_rooms(bot: commands.Bot):
+    """بعد إعادة تشغيل البوت: نرجّع مالكي الرومات المؤقتة الموجودة"""
+    if not VOICE_CREATE_CHANNEL_ID:
+        return
+    create_channel = bot.get_channel(VOICE_CREATE_CHANNEL_ID)
+    if not isinstance(create_channel, discord.VoiceChannel):
+        return
+    for ch in create_channel.guild.voice_channels:
+        if ch.id == create_channel.id or ch.category_id != create_channel.category_id:
+            continue
+        owner_id = owner_from_overwrites(ch)
+        if owner_id:
+            temp_rooms[ch.id] = owner_id
+
+
+async def send_voice_panel(bot: commands.Bot):
+    if not VOICE_PANEL_CHANNEL_ID:
+        return
+    channel = bot.get_channel(VOICE_PANEL_CHANNEL_ID)
+    if channel is None:
+        return
+    # نحذف لوحة الصوت القديمة فقط
+    try:
+        async for m in channel.history(limit=20):
+            if m.author.id == bot.user.id and m.embeds and m.embeds[0].title == VOICE_PANEL_TITLE:
+                await m.delete()
+    except discord.HTTPException:
+        pass
+
+    embed = discord.Embed(title=VOICE_PANEL_TITLE, color=0x0F172A)
+    file = None
+    path = os.path.join(BASE_DIR, VOICE_PANEL_IMAGE)
+    if os.path.exists(path):
+        file = discord.File(path, filename=VOICE_PANEL_IMAGE)
+        embed.set_image(url=f"attachment://{VOICE_PANEL_IMAGE}")
+    await channel.send(embed=embed, file=file, view=VoicePanel())
 
 
 # ============================================================
@@ -563,12 +842,14 @@ class ClosedControls(discord.ui.View):
 class TicketBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.default())
+        self._voice_panel_sent = False
 
     async def setup_hook(self):
         # الأزرار والقائمة الدائمة (تشتغل حتى بعد إعادة تشغيل البوت)
         self.add_view(TicketPanel())
         self.add_view(TicketControls())
         self.add_view(ClosedControls())
+        self.add_view(VoicePanel())
 
         # سيرفر ويب صغير عشان ريندر ما يوقف الخدمة
         app = web.Application()
@@ -588,6 +869,26 @@ class TicketBot(commands.Bot):
     async def on_ready(self):
         print(f"Bot is ready: {self.user} ({self.user.id})")
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Tickets"))
+        try:
+            await recover_temp_rooms(self)
+            if not self._voice_panel_sent:
+                self._voice_panel_sent = True
+                await send_voice_panel(self)
+        except Exception:
+            traceback.print_exc()
+
+    async def on_voice_state_update(self, member, before, after):
+        if not VOICE_CREATE_CHANNEL_ID:
+            return
+        try:
+            if after.channel and after.channel.id == VOICE_CREATE_CHANNEL_ID:
+                await create_temp_room(member, after.channel)
+            ch = before.channel
+            if ch and ch.id in temp_rooms and len(ch.voice_states) == 0:
+                temp_rooms.pop(ch.id, None)
+                await ch.delete(reason="روم مؤقت فارغ")
+        except Exception:
+            traceback.print_exc()
 
 
 bot = TicketBot()
@@ -619,7 +920,7 @@ async def panel(interaction: discord.Interaction):
         file=discord.File(image_path, filename=PANEL_IMAGE),
         view=TicketPanel(),
     )
-    await interaction.response.send_message(f"{E_OK} تم إرسال اللوحة في {channel.mention}", ephemeral=True)
+    await interaction.response.send_message(f"تم إرسال اللوحة في {channel.mention}", ephemeral=True)
 
 
 if __name__ == "__main__":
