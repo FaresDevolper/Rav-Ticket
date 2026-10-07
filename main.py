@@ -29,7 +29,7 @@ VOICE_PANEL_CHANNEL_ID = 1556472672207114240                          # آيدي
 VOICE_PANEL_IMAGE = "voice_panel.png"               # صورة اللوحة (ارفعها في جيت هوب بنفس الاسم)
 VOICE_PANEL_TITLE = "Rav - Temp Voice"              # عنوان اللوحة
 
-START_TICKET_NUMBER = 493                             # رقم أول تذكرة
+START_TICKET_NUMBER = 495                             # رقم أول تذكرة
 
 # صورة اللوحة: ارفعها في جيت هوب بجانب main.py وبنفس الاسم
 PANEL_IMAGE = "background.png"
@@ -376,7 +376,89 @@ async def close_ticket(interaction: discord.Interaction):
 
 
 # ============================================================
-#  أزرار التذكرة: استلام / خيارات التذكرة
+#  إضافة شخص إلى التذكرة (للمستلم فقط)
+# ============================================================
+async def find_member_by_input(guild: discord.Guild, text: str):
+    """يدور على العضو باليوزر أو الآيدي أو المنشن"""
+    text = text.strip()
+    cleaned = text.replace("<@", "").replace(">", "").replace("!", "").lstrip("@").strip()
+
+    # آيدي أو منشن
+    if cleaned.isdigit():
+        return await get_member(guild, int(cleaned))
+
+    # يوزر
+    member = guild.get_member_named(cleaned)
+    if member:
+        return member
+    try:
+        results = await guild.query_members(query=cleaned, limit=10)
+    except Exception:
+        results = []
+    low = cleaned.lower()
+    for m in results:
+        names = {m.name.lower(), m.display_name.lower()}
+        if getattr(m, "global_name", None):
+            names.add(m.global_name.lower())
+        if low in names:
+            return m
+    return results[0] if results else None
+
+
+class AddUserModal(discord.ui.Modal, title="إضافة شخص إلى التذكرة"):
+    user_input = discord.ui.TextInput(
+        label="اكتب يوزر الشخص اللي تبغى تدخله",
+        placeholder="اليوزر (مثال: username) أو الآيدي",
+        max_length=100,
+        required=True,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        info = read_topic(interaction.channel)
+        if not is_admin(interaction.user) or not info["claimed"] or info["claimed"] != interaction.user.id:
+            return await deny(interaction, "هذا الزر مخصص لمستلم التذكرة فقط.")
+
+        await interaction.response.defer(ephemeral=True)
+
+        member = await find_member_by_input(interaction.guild, self.user_input.value)
+        if not member:
+            return await deny(interaction, "ما لقيت هذا العضو في السيرفر، تأكد من اليوزر وحاول مرة ثانية.")
+        if member.bot:
+            return await deny(interaction, "لا يمكن إضافة بوت إلى التذكرة.")
+
+        try:
+            await interaction.channel.set_permissions(
+                member,
+                overwrite=discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True,
+                    attach_files=True, embed_links=True,
+                ),
+            )
+        except discord.HTTPException:
+            traceback.print_exc()
+            return await deny(interaction, "تعذّر إضافة العضو، تأكد من صلاحيات البوت.")
+
+        await interaction.followup.send(
+            embed=discord.Embed(description=f"تمت إضافة {member.mention} إلى التذكرة.", color=COLOR_CLAIM),
+            ephemeral=True,
+        )
+        await interaction.channel.send(
+            content=member.mention,
+            embed=discord.Embed(
+                description=f"قام {interaction.user.mention} بإضافة {member.mention} إلى هذه التذكرة.",
+                color=COLOR_OPEN,
+            ),
+        )
+
+        log = discord.Embed(title="إضافة شخص إلى تذكرة", color=COLOR_OPEN, timestamp=now_utc())
+        log.add_field(name="الروم", value=interaction.channel.mention)
+        log.add_field(name="المستلم", value=interaction.user.mention)
+        log.add_field(name="العضو المضاف", value=member.mention)
+        await send_log(interaction.guild, log)
+
+
+# ============================================================
+#  أزرار التذكرة: استلام / خيارات التذكرة / إضافة شخص
 # ============================================================
 class TicketControls(discord.ui.View):
     def __init__(self, claimed: bool = False):
@@ -424,6 +506,20 @@ class TicketControls(discord.ui.View):
             view=OptionsView(),
             ephemeral=True,
         )
+
+    # ---------- إضافة شخص ----------
+    @discord.ui.button(label="إضافة شخص", style=discord.ButtonStyle.secondary, custom_id="ticket:adduser")
+    async def add_user_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_admin(interaction.user):
+            return await deny(interaction, "هذا الزر مخصص لإدارة التذاكر فقط.")
+
+        info = read_topic(interaction.channel)
+        if not info["claimed"]:
+            return await deny(interaction, "لازم تستلم التذكرة أولاً عشان تقدر تضيف شخص.")
+        if info["claimed"] != interaction.user.id:
+            return await deny(interaction, f"هذه التذكرة مستلمة من <@{info['claimed']}> وهو الوحيد اللي يقدر يضيف أشخاص.")
+
+        await interaction.response.send_modal(AddUserModal())
 
 
 class OptionsView(discord.ui.View):
