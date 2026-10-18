@@ -32,7 +32,7 @@ VOICE_PANEL_TITLE = "Rav - Temp Voice"              # عنوان اللوحة
 START_TICKET_NUMBER = 495                             # رقم أول تذكرة
 
 # صورة اللوحة: ارفعها في جيت هوب بجانب main.py وبنفس الاسم
-PANEL_IMAGE = "background.png"
+PANEL_IMAGE = "backgroundd.png"
 
 # أقسام التذاكر (تقدر تغيّر الأسماء أو تضيف أقسام من هنا)
 # كل قسم له صورة اختيارية داخل التذكرة: banner_1.png للقسم الأول، banner_2.png للثاني ... وهكذا
