@@ -28,7 +28,7 @@ PORT = int(os.getenv("PORT", "8080"))
 
 ACCENT_COLOR = 0x333153        # لون شريط اللوحة
 ICON_VERSION = 1               # ارفعه (2، 3...) إذا غيّرت لون الأيقونات وأعدت رفعها
-ICON_DIR = "icons"
+ICON_DIR = "."
 ROOM_NAME_FORMAT = "روم {name}"
 AUTO_TRANSFER_ON_OWNER_LEAVE = True   # لو المالك طلع وبقي ناس: ينتقل الملك تلقائياً
 FLIP_ROWS = False                     # اجعلها True لو ترتيب الأزرار معكوس عندك (واجهة RTL)
