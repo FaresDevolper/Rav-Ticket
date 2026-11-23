@@ -904,12 +904,18 @@ HANDLERS: dict[str, Callable[[discord.Interaction], Awaitable[None]]] = {
 # الصق هذا القسم كاملاً قبل قسم "التشغيل" (قبل: if __name__ == "__main__":)
 # لا يعدّل أي سطر من كودك الأصلي، يربط نفسه بالبوت من الخارج فقط.
 # يحتاج: pip install aiohttp  (موجودة عندك أصلاً لأنك تستخدم aiohttp.web)
+#
+# المميزات:
+#  - يتجاهل أي إيموجي/ستكر موجود في السيرفر مسبقاً (بنفس الاسم) ويكمل إضافة الناقص فقط
+#  - لو ديسكورد حط Rate Limit ينتظر ويكمل لحاله بعد ما يخلص، وتظهر مدة الانتظار في رسالة الحالة
+#  - خيار حد للدفعة (حد=40): يوقف بعد 40 إضافة، وتعيد نفس الأمر لاحقاً فيكمل الباقي
 
 import io
 import ipaddress
 import socket
 import struct
 import zipfile
+import zlib
 from dataclasses import field as eb_field
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -920,6 +926,7 @@ from discord import app_commands
 EB_GUILD_ID = int(os.getenv("GUILD_ID", "0")) or None     # اختياري: مزامنة فورية لأمر السلاش في سيرفر واحد
 EB_EDIT_INTERVAL = 4.0                  # كل كم ثانية نحدّث رسالة الحالة (لتجنب Rate Limit)
 EB_ADD_DELAY = 0.6                      # تأخير بسيط بين كل إضافة وأخرى
+EB_MAX_RATE_RETRIES = 50                # كم مرة ينتظر ويعيد المحاولة لنفس العنصر عند الـ Rate Limit
 EB_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 EB_MAX_UNZIPPED_TOTAL = 300 * 1024 * 1024   # حماية من zip bomb
 EB_MAX_ITEMS = 400
@@ -938,7 +945,25 @@ EB_KIND_WORDS = {
     "ايموجي": "emoji", "إيموجي": "emoji", "emoji": "emoji",
     "ستكر": "sticker", "ستيكر": "sticker", "sticker": "sticker",
 }
+EB_LIMIT_RE = re.compile(r"^(?:حد|limit)[=:](\d+)$", re.IGNORECASE)   # مثال: حد=40
 EB_LOCKS: dict = {}
+EB_RATE = {"until": 0.0}                # وقت انتهاء آخر Rate Limit (يُحدَّث تلقائياً)
+
+
+# ---------- مراقبة رسائل الـ Rate Limit من مكتبة discord.py (لعرض مدة الانتظار) ----------
+class _EBRateHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = record.getMessage()
+            if "rate limited" in msg and ("/emojis" in msg or "/stickers" in msg):
+                m = re.search(r"Retrying in ([\d.]+) seconds", msg)
+                if m:
+                    EB_RATE["until"] = time.time() + float(m.group(1))
+        except Exception:
+            pass
+
+
+logging.getLogger("discord.http").addHandler(_EBRateHandler(level=logging.WARNING))
 
 
 # ---------- هياكل البيانات ----------
@@ -963,7 +988,9 @@ class EBStats:
     total_sticker: int = 0
     ok_emoji: int = 0
     ok_sticker: int = 0
-    ignored: int = 0
+    skipped: int = 0                # موجود مسبقاً في السيرفر (تم تجاهله)
+    deferred: int = 0               # لم يُعالج بسبب حد الدفعة
+    ignored: int = 0                # ملفات غير مدعومة داخل الأرشيف
     failures: list = eb_field(default_factory=list)     # (الاسم, النوع, السبب)
     current: str = "—"
     started: float = eb_field(default_factory=time.monotonic)
@@ -975,6 +1002,8 @@ class EBStats:
     def ok(self): return self.ok_emoji + self.ok_sticker
     @property
     def failed(self): return len(self.failures)
+    @property
+    def done(self): return self.ok + self.failed + self.skipped + self.deferred
     @property
     def elapsed(self): return (self.finished or time.monotonic()) - self.started
 
@@ -995,7 +1024,7 @@ def eb_bar(done: int, total: int, width: int = 12) -> str:
 
 
 def eb_clean_name(raw: str, kind: str, taken: set) -> str:
-    """تنظيف الاسم ليناسب شروط ديسكورد مع الحفاظ على الاسم الأصلي قدر الإمكان."""
+    """تنظيف الاسم ليناسب شروط ديسكورد. الاسم ثابت لنفس الملف عشان يتعرف على الموجود مسبقاً."""
     stem = os.path.splitext(os.path.basename(raw))[0]
     if kind == "emoji":
         name = re.sub(r"[^A-Za-z0-9_]+", "_", stem)     # الإيموجي: إنجليزي وأرقام و _ فقط (2-32)
@@ -1005,10 +1034,11 @@ def eb_clean_name(raw: str, kind: str, taken: set) -> str:
         max_len = 30
     name = re.sub(r"_+", "_", name).strip("_")
     if len(name) < 2:
-        name = f"{kind}_{len(taken) + 1}"
+        # اسم غير صالح (مثلاً عربي للإيموجي): نولّد اسماً ثابتاً من اسم الملف الأصلي
+        name = f"{kind}_{zlib.crc32(stem.encode('utf-8')):08x}"
     name = name[:max_len]
     base, i = name, 2
-    while name.lower() in taken:
+    while name.lower() in taken:          # تكرار داخل نفس الطلب فقط
         suffix = f"_{i}"
         name = base[:max_len - len(suffix)] + suffix
         i += 1
@@ -1202,7 +1232,11 @@ def eb_error_embed(text: str) -> discord.Embed:
 
 def eb_status_embed(stats: EBStats, final: bool = False) -> discord.Embed:
     if final:
-        if stats.ok == 0:
+        if stats.deferred:
+            color, title = discord.Color.gold(), "⏸️ توقف عند حد الدفعة"
+        elif stats.ok == 0 and stats.failed == 0 and stats.skipped:
+            color, title = discord.Color.blurple(), "ℹ️ كل العناصر موجودة مسبقاً في السيرفر"
+        elif stats.ok == 0:
             color, title = discord.Color.red(), "❌ انتهت العملية بدون إضافة أي عنصر"
         elif stats.failed:
             color, title = discord.Color.orange(), "⚠️ اكتملت العملية مع بعض الأخطاء"
@@ -1210,7 +1244,6 @@ def eb_status_embed(stats: EBStats, final: bool = False) -> discord.Embed:
             color, title = discord.Color.green(), "🎉 اكتملت العملية بنجاح"
     else:
         color, title = discord.Color.blurple(), "⏳ جاري الإضافة..."
-    done = stats.ok + stats.failed
     e = discord.Embed(title=title, color=color)
     e.add_field(name="📦 المطلوب إضافته",
                 value=f"😀 إيموجيات: **{stats.total_emoji}**\n🏷️ ستكرات: **{stats.total_sticker}**\n"
@@ -1218,12 +1251,24 @@ def eb_status_embed(stats: EBStats, final: bool = False) -> discord.Embed:
     e.add_field(name="✅ تمت إضافته",
                 value=f"😀 **{stats.ok_emoji}**  |  🏷️ **{stats.ok_sticker}**\nالمجموع: **{stats.ok}**",
                 inline=True)
-    e.add_field(name="❌ فشل / تم تخطيه", value=f"**{stats.failed}**", inline=True)
+    e.add_field(name="❌ فشل", value=f"**{stats.failed}**", inline=True)
+    if stats.skipped:
+        e.add_field(name="⏭️ موجود مسبقاً (تم تجاهله)", value=f"**{stats.skipped}**", inline=True)
+    if stats.deferred:
+        e.add_field(name="⏸️ متبقي بعد الحد", value=f"**{stats.deferred}**", inline=True)
     e.add_field(name="⏱️ الوقت الإجمالي" if final else "⏱️ الوقت المستغرق",
                 value=eb_fmt_time(stats.elapsed), inline=True)
-    e.add_field(name="التقدم", value=f"{eb_bar(done, stats.total)}  **{done}/{stats.total}**", inline=False)
+    wait_left = EB_RATE["until"] - time.time()
+    if not final and wait_left > 1:
+        e.add_field(name="⏳ ديسكورد حط Rate Limit",
+                    value=f"باقي تقريباً **{eb_fmt_time(wait_left)}** وبعدها يكمل تلقائياً بدون ما تسوي شي.",
+                    inline=False)
+    e.add_field(name="التقدم", value=f"{eb_bar(stats.done, stats.total)}  **{stats.done}/{stats.total}**",
+                inline=False)
     if not final:
         e.set_footer(text=f"الآن: {stats.current}")
+    elif stats.deferred:
+        e.set_footer(text="أعد نفس الأمر لإكمال الباقي، الموجود مسبقاً يُتجاهل تلقائياً.")
     elif stats.ignored:
         e.set_footer(text=f"تم تجاهل {stats.ignored} ملف غير مدعوم داخل الأرشيف")
     return e
@@ -1241,56 +1286,108 @@ def eb_explain_http_error(e: discord.HTTPException):
         return f"ملف أو اسم غير صالح: {str(e.text)[:90]}", None
     if e.status == 413:
         return "حجم الملف أكبر من المسموح", None
+    if e.status == 429:
+        return "استمر الـ Rate Limit من ديسكورد لفترة طويلة جداً", None
     return f"خطأ من ديسكورد ({e.status}): {str(e.text)[:90]}", None
 
 
-async def eb_add_items(guild: discord.Guild, items: list, stats: EBStats, reason: str):
+def eb_retry_after(e: discord.HTTPException) -> float:
+    """مدة الانتظار المطلوبة من ديسكورد (بالثواني)."""
+    try:
+        return max(1.0, float(e.response.headers.get("Retry-After", 60)))
+    except Exception:
+        return 60.0
+
+
+async def eb_create_one(guild: discord.Guild, it: EBItem, reason: str):
+    if it.kind == "emoji":
+        await guild.create_custom_emoji(name=it.name, image=it.data, reason=reason)
+    else:
+        await guild.create_sticker(
+            name=it.name, description=it.name, emoji=EB_STICKER_TAG,
+            file=discord.File(io.BytesIO(it.data), filename=f"{it.name}{it.ext}"), reason=reason)
+
+
+async def eb_add_items(guild: discord.Guild, items: list, stats: EBStats, reason: str, limit: int = 0):
     emojis = await guild.fetch_emojis()
     stickers = await guild.fetch_stickers()
     used = {"static": sum(1 for e in emojis if not e.animated),
             "anim": sum(1 for e in emojis if e.animated),
             "sticker": len(stickers)}
-    taken_emoji = {e.name.lower() for e in emojis}
-    taken_sticker = {s.name.lower() for s in stickers}
+    existing = {"emoji": {e.name.lower() for e in emojis},
+                "sticker": {s.name.lower() for s in stickers}}
+
+    # نثبّت اسم كل عنصر قبل البدء (نفس الملف = نفس الاسم دائماً) عشان يتعرف على الموجود مسبقاً
+    batch_names = {"emoji": set(), "sticker": set()}
+    for it in items:
+        it.name = eb_clean_name(it.path, it.kind, batch_names[it.kind])
 
     def fail(it: EBItem, why: str):
         stats.failures.append((it.name or it.path, it.kind, why))
 
+    added = 0
     for it in items:
-        it.name = eb_clean_name(it.path, it.kind, taken_emoji if it.kind == "emoji" else taken_sticker)
         stats.current = it.name
+
+        # 1) موجود في السيرفر مسبقاً؟ نتجاهله ونكمل
+        if it.name.lower() in existing[it.kind]:
+            stats.skipped += 1
+            continue
+        # 2) مرفوض مسبقاً (حجم / صيغة)
         if it.error:
             fail(it, it.error)
             continue
-        try:
-            if it.kind == "emoji":
-                slot = "anim" if it.animated else "static"
-                if used[slot] >= guild.emoji_limit:
-                    fail(it, "خانات الإيموجي المتحركة ممتلئة" if it.animated else "خانات الإيموجي الثابتة ممتلئة")
+        # 3) وصلنا حد الدفعة؟ نؤجل الباقي
+        if limit and added >= limit:
+            stats.deferred += 1
+            continue
+        # 4) فحص الخانات
+        if it.kind == "emoji":
+            slot = "anim" if it.animated else "static"
+            if used[slot] >= guild.emoji_limit:
+                fail(it, "خانات الإيموجي المتحركة ممتلئة" if it.animated else "خانات الإيموجي الثابتة ممتلئة")
+                continue
+        else:
+            slot = "sticker"
+            if used[slot] >= guild.sticker_limit:
+                fail(it, "خانات الستكرات ممتلئة")
+                continue
+
+        # 5) الإضافة، ولو جاء Rate Limit ننتظر ونعيد المحاولة لنفس العنصر
+        created = False
+        for attempt in range(EB_MAX_RATE_RETRIES + 1):
+            try:
+                await eb_create_one(guild, it, reason)
+                created = True
+                break
+            except discord.Forbidden:
+                fail(it, "لا أملك صلاحية Manage Emojis and Stickers")
+                break
+            except discord.HTTPException as e:
+                if e.status == 429 and attempt < EB_MAX_RATE_RETRIES:
+                    wait = eb_retry_after(e)
+                    EB_RATE["until"] = time.time() + wait
+                    await asyncio.sleep(wait + 1)
                     continue
-                await guild.create_custom_emoji(name=it.name, image=it.data, reason=reason)
-                used[slot] += 1
+                why, full = eb_explain_http_error(e)
+                if full == "emoji":
+                    used["static"] = used["anim"] = guild.emoji_limit
+                elif full == "sticker":
+                    used["sticker"] = guild.sticker_limit
+                fail(it, why)
+                break
+            except Exception as e:      # أي خطأ غير متوقع لا يوقف بقية الملفات
+                fail(it, f"خطأ غير متوقع: {type(e).__name__}")
+                break
+
+        if created:
+            used[slot] += 1
+            existing[it.kind].add(it.name.lower())
+            added += 1
+            if it.kind == "emoji":
                 stats.ok_emoji += 1
             else:
-                if used["sticker"] >= guild.sticker_limit:
-                    fail(it, "خانات الستكرات ممتلئة")
-                    continue
-                await guild.create_sticker(
-                    name=it.name, description=it.name, emoji=EB_STICKER_TAG,
-                    file=discord.File(io.BytesIO(it.data), filename=f"{it.name}{it.ext}"), reason=reason)
-                used["sticker"] += 1
                 stats.ok_sticker += 1
-        except discord.Forbidden:
-            fail(it, "لا أملك صلاحية Manage Emojis and Stickers")
-        except discord.HTTPException as e:
-            why, full = eb_explain_http_error(e)
-            if full == "emoji":
-                used["static"] = used["anim"] = guild.emoji_limit
-            elif full == "sticker":
-                used["sticker"] = guild.sticker_limit
-            fail(it, why)
-        except Exception as e:      # أي خطأ غير متوقع لا يوقف بقية الملفات
-            fail(it, f"خطأ غير متوقع: {type(e).__name__}")
         await asyncio.sleep(EB_ADD_DELAY)
 
 
@@ -1307,7 +1404,7 @@ async def eb_live_updater(msg: discord.Message, stats: EBStats):
         pass
 
 
-async def eb_run_job(channel, guild, author, attachments, url, forced):
+async def eb_run_job(channel, guild, author, attachments, url, forced, limit: int = 0):
     lock = EB_LOCKS.setdefault(guild.id, asyncio.Lock())
     if lock.locked():
         return await channel.send(embed=eb_error_embed("يوجد طلب قيد التنفيذ في هذا السيرفر، انتظر حتى ينتهي."))
@@ -1337,7 +1434,8 @@ async def eb_run_job(channel, guild, author, attachments, url, forced):
         status_msg = await channel.send(embed=eb_status_embed(stats))
         updater = asyncio.create_task(eb_live_updater(status_msg, stats))
         try:
-            await eb_add_items(guild, items, stats, reason=f"إضافة جماعية بواسطة {author} ({author.id})")
+            await eb_add_items(guild, items, stats, reason=f"إضافة جماعية بواسطة {author} ({author.id})",
+                               limit=limit)
         finally:
             stats.finished = time.monotonic()
             updater.cancel()
@@ -1366,9 +1464,10 @@ eb_tree = app_commands.CommandTree(bot)
 @app_commands.checks.has_permissions(manage_emojis_and_stickers=True)
 @app_commands.describe(file="ملف zip أو صورة", file2="صورة إضافية", file3="صورة إضافية",
                        file4="صورة إضافية", file5="صورة إضافية",
-                       url="رابط مباشر لملف zip", kind="تحديد النوع (الافتراضي: تلقائي)")
+                       url="رابط مباشر لملف zip", kind="تحديد النوع (الافتراضي: تلقائي)",
+                       limit="حد الدفعة: يوقف بعد هذا العدد من الإضافات (الافتراضي: بدون حد)")
 @app_commands.rename(file="ملف", file2="ملف2", file3="ملف3", file4="ملف4", file5="ملف5",
-                     url="رابط", kind="النوع")
+                     url="رابط", kind="النوع", limit="حد")
 @app_commands.choices(kind=[
     app_commands.Choice(name="تلقائي", value="auto"),
     app_commands.Choice(name="ايموجي", value="emoji"),
@@ -1381,11 +1480,13 @@ async def eb_slash_add(interaction: discord.Interaction,
                        file4: Optional[discord.Attachment] = None,
                        file5: Optional[discord.Attachment] = None,
                        url: Optional[str] = None,
-                       kind: Optional[app_commands.Choice[str]] = None):
+                       kind: Optional[app_commands.Choice[str]] = None,
+                       limit: Optional[app_commands.Range[int, 1, 400]] = None):
     attachments = [a for a in (file, file2, file3, file4, file5) if a]
     forced = kind.value if kind and kind.value != "auto" else None
     await interaction.response.send_message("📨 استلمت طلبك، تابع الرسائل في الروم...", ephemeral=True)
-    await eb_run_job(interaction.channel, interaction.guild, interaction.user, attachments, url, forced)
+    await eb_run_job(interaction.channel, interaction.guild, interaction.user, attachments, url, forced,
+                     limit or 0)
 
 
 @eb_tree.error
@@ -1419,7 +1520,7 @@ async def _eb_setup_hook():
 bot.setup_hook = _eb_setup_hook
 
 
-# الأمر النصي بدون بادئة: "اضف" مع مرفقات / رابط / ايموجي / ستكر  (نفس أسلوب أوامرك)
+# الأمر النصي بدون بادئة: "اضف" مع مرفقات / رابط / ايموجي / ستكر / حد=40  (نفس أسلوب أوامرك)
 _eb_orig_on_message = bot.on_message
 
 
@@ -1429,20 +1530,127 @@ async def _eb_on_message(message: discord.Message):
         if tokens and tokens[0] in EB_COMMAND_WORDS:
             perms = message.author.guild_permissions
             if perms.manage_emojis_and_stickers or getattr(perms, "create_expressions", False):
-                url, forced = None, None
+                url, forced, limit = None, None, 0
                 for t in tokens[1:]:
+                    m = EB_LIMIT_RE.match(t)
                     if t.lower().startswith(("http://", "https://")):
                         url = t.strip("<>")
                     elif t.lower() in EB_KIND_WORDS:
                         forced = EB_KIND_WORDS[t.lower()]
+                    elif m:
+                        limit = int(m.group(1))
                 asyncio.create_task(eb_run_job(message.channel, message.guild, message.author,
-                                               list(message.attachments), url, forced))
+                                               list(message.attachments), url, forced, limit))
                 return      # تم التعامل معها، لا نمررها لبقية أوامر التمب فويس
     await _eb_orig_on_message(message)
 
 
 bot.on_message = _eb_on_message
 # ============================================================ نهاية إضافة الإيموجيات والستكرات
+
+
+# ============================================================ إضافة: أمر جلب آيديات الأعضاء (ايديات)
+# الاستخدام: ايديات <آيدي السيرفر>   (أو بدون آيدي داخل السيرفر نفسه)
+# يرسل آيدي كل الأعضاء بدون البوتات، آيدي في كل سطر داخل بلوك كود، مقسّمة على عدة رسائل.
+# يحتاج Server Members Intent مفعّل في الـ Developer Portal (وهو مفعّل في الكود أصلاً: intents.members)
+
+IDS_COMMAND_WORDS = {"ايديات", "!ايديات"}
+IDS_CHUNK_LIMIT = 1900      # أقصى حروف للآيديات في الرسالة الواحدة (حد ديسكورد 2000 بعد الغلاف)
+
+
+def ids_build_chunks(ids: list, limit: int = IDS_CHUNK_LIMIT) -> list:
+    """يقسّم الآيديات على رسائل بدون ما يشق أي آيدي نصفين."""
+    chunks, cur, cur_len = [], [], 0
+    for uid in ids:
+        add = len(uid) + 1
+        if cur and cur_len + add > limit:
+            chunks.append("\n".join(cur))
+            cur, cur_len = [], 0
+        cur.append(uid)
+        cur_len += add
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks
+
+
+async def ids_can_use(user, guild: discord.Guild) -> bool:
+    """الأمر لمالك السيرفر أو أصحاب Administrator في السيرفر المطلوب فقط."""
+    if user.id == guild.owner_id:
+        return True
+    member = guild.get_member(user.id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user.id)
+        except discord.HTTPException:
+            return False
+    return member.guild_permissions.administrator
+
+
+async def ids_run(message: discord.Message, args: list):
+    channel = message.channel
+
+    async def say(text: str):
+        try:
+            await channel.send(text)
+        except discord.HTTPException:
+            pass
+
+    # تحديد السيرفر المطلوب
+    if args:
+        if not args[0].isdigit():
+            return await say("الاستخدام: `ايديات <آيدي السيرفر>`")
+        guild = bot.get_guild(int(args[0]))
+    else:
+        guild = message.guild
+        if guild is None:
+            return await say("الاستخدام: `ايديات <آيدي السيرفر>`")
+    if guild is None:
+        return await say("البوت غير موجود في هذا السيرفر، أو الآيدي غير صحيح.")
+    if not await ids_can_use(message.author, guild):
+        return await say("ما عندك صلاحية، لازم تكون Administrator في السيرفر المطلوب.")
+
+    # جلب كل الأعضاء مباشرة من ديسكورد (مو من الكاش) عشان ما ينقص أحد
+    await say(f"⏳ جاري جلب أعضاء **{guild.name}**...")
+    ids, total = [], 0
+    try:
+        async for m in guild.fetch_members(limit=None):
+            total += 1
+            if not m.bot:
+                ids.append(str(m.id))
+    except Exception as e:
+        return await say(f"تعذر جلب الأعضاء ({type(e).__name__}). تأكد أن **Server Members Intent** مفعّل في Developer Portal.")
+
+    ids = list(dict.fromkeys(ids))      # حذف أي تكرار مع الحفاظ على الترتيب
+    if not ids:
+        return await say("ما لقيت أعضاء (غير البوتات) في هذا السيرفر.")
+
+    chunks = ids_build_chunks(ids)
+    n = len(chunks)
+    head = f"👥 **{guild.name}**\nعدد الأعضاء (بدون البوتات): **{len(ids)}**\nسيتم الإرسال في **{n}** رسالة."
+    if guild.member_count and total < guild.member_count:
+        head += f"\n⚠️ ديسكورد أعاد {total} من أصل {guild.member_count} عضو، قد ينقص بعضهم."
+    await say(head)
+    for i, chunk in enumerate(chunks, 1):
+        await say(f"**({i}/{n})**\n```\n{chunk}\n```")
+        await asyncio.sleep(0.7)
+    await say(f"✅ تم إرسال **{len(ids)}** آيدي كاملة.")
+
+
+# ربط الأمر بالبوت من الخارج (نلف on_message الحالي دون تعديله)
+_ids_prev_on_message = bot.on_message
+
+
+async def _ids_on_message(message: discord.Message):
+    if not message.author.bot:
+        tokens = message.content.split()
+        if tokens and tokens[0] in IDS_COMMAND_WORDS:
+            asyncio.create_task(ids_run(message, tokens[1:]))
+            return
+    await _ids_prev_on_message(message)
+
+
+bot.on_message = _ids_on_message
+# ============================================================ نهاية إضافة أمر ايديات
 
 
 # ============================================================ التشغيل
