@@ -900,6 +900,551 @@ HANDLERS: dict[str, Callable[[discord.Interaction], Awaitable[None]]] = {
     "owner": picker("user", "اختر العضو (داخل الروم) لنقل الملكية إليه", act_owner, 1),
 }
 
+# ============================================================ إضافة: بوت الإيموجيات والستكرات (أمر اضف)
+# الصق هذا القسم كاملاً قبل قسم "التشغيل" (قبل: if __name__ == "__main__":)
+# لا يعدّل أي سطر من كودك الأصلي، يربط نفسه بالبوت من الخارج فقط.
+# يحتاج: pip install aiohttp  (موجودة عندك أصلاً لأنك تستخدم aiohttp.web)
+
+import io
+import ipaddress
+import socket
+import struct
+import zipfile
+from dataclasses import field as eb_field
+from urllib.parse import unquote, urljoin, urlparse
+
+import aiohttp
+from discord import app_commands
+
+# ---------- إعدادات الإضافة ----------
+EB_GUILD_ID = int(os.getenv("GUILD_ID", "0")) or None     # اختياري: مزامنة فورية لأمر السلاش في سيرفر واحد
+EB_EDIT_INTERVAL = 4.0                  # كل كم ثانية نحدّث رسالة الحالة (لتجنب Rate Limit)
+EB_ADD_DELAY = 0.6                      # تأخير بسيط بين كل إضافة وأخرى
+EB_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
+EB_MAX_UNZIPPED_TOTAL = 300 * 1024 * 1024   # حماية من zip bomb
+EB_MAX_ITEMS = 400
+EB_EMOJI_MAX_BYTES = 256 * 1024
+EB_STICKER_MAX_BYTES = 512 * 1024
+EB_STICKER_MIN_DIM = 300                # صورة بهذا الحجم (بكسل) أو أكبر تُعتبر ستكر في الوضع التلقائي
+EB_STICKER_TAG = "slight_smile"         # الإيموجي المرتبط بالستكر (مطلوب من ديسكورد)
+
+EB_EMOJI_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+EB_STICKER_EXTS = {".png", ".apng", ".gif", ".json"}    # json = Lottie
+EB_ALL_EXTS = EB_EMOJI_EXTS | EB_STICKER_EXTS
+EB_STICKER_HINTS = ("sticker", "ستكر", "ستيكر", "ملصق")
+EB_EMOJI_HINTS = ("emoji", "emote", "ايموجي", "إيموجي", "ايموجى")
+EB_COMMAND_WORDS = {"اضف", "!اضف"}      # كلمة الأمر في الرسائل (بدون بادئة مثل بقية أوامرك)
+EB_KIND_WORDS = {
+    "ايموجي": "emoji", "إيموجي": "emoji", "emoji": "emoji",
+    "ستكر": "sticker", "ستيكر": "sticker", "sticker": "sticker",
+}
+EB_LOCKS: dict = {}
+
+
+# ---------- هياكل البيانات ----------
+@dataclass
+class EBItem:
+    path: str
+    data: bytes
+    size: int
+    ext: str
+    kind: str                       # emoji / sticker
+    error: Optional[str] = None
+    name: str = ""
+
+    @property
+    def animated(self) -> bool:
+        return self.ext == ".gif"
+
+
+@dataclass
+class EBStats:
+    total_emoji: int = 0
+    total_sticker: int = 0
+    ok_emoji: int = 0
+    ok_sticker: int = 0
+    ignored: int = 0
+    failures: list = eb_field(default_factory=list)     # (الاسم, النوع, السبب)
+    current: str = "—"
+    started: float = eb_field(default_factory=time.monotonic)
+    finished: Optional[float] = None
+
+    @property
+    def total(self): return self.total_emoji + self.total_sticker
+    @property
+    def ok(self): return self.ok_emoji + self.ok_sticker
+    @property
+    def failed(self): return len(self.failures)
+    @property
+    def elapsed(self): return (self.finished or time.monotonic()) - self.started
+
+
+# ---------- أدوات مساعدة ----------
+def eb_fmt_time(seconds: float) -> str:
+    s = int(seconds)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{h}س {m}د {s}ث" if h else f"{m}د {s}ث"
+
+
+def eb_bar(done: int, total: int, width: int = 12) -> str:
+    if total <= 0:
+        return "▱" * width
+    filled = round(width * done / total)
+    return "▰" * filled + "▱" * (width - filled)
+
+
+def eb_clean_name(raw: str, kind: str, taken: set) -> str:
+    """تنظيف الاسم ليناسب شروط ديسكورد مع الحفاظ على الاسم الأصلي قدر الإمكان."""
+    stem = os.path.splitext(os.path.basename(raw))[0]
+    if kind == "emoji":
+        name = re.sub(r"[^A-Za-z0-9_]+", "_", stem)     # الإيموجي: إنجليزي وأرقام و _ فقط (2-32)
+        max_len = 32
+    else:
+        name = re.sub(r"[^\w]+", "_", stem, flags=re.UNICODE)   # الستكر: يدعم العربي (2-30)
+        max_len = 30
+    name = re.sub(r"_+", "_", name).strip("_")
+    if len(name) < 2:
+        name = f"{kind}_{len(taken) + 1}"
+    name = name[:max_len]
+    base, i = name, 2
+    while name.lower() in taken:
+        suffix = f"_{i}"
+        name = base[:max_len - len(suffix)] + suffix
+        i += 1
+    taken.add(name.lower())
+    return name
+
+
+def eb_image_size(data: bytes):
+    """قراءة أبعاد PNG / GIF من الهيدر بدون مكتبات إضافية."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        return struct.unpack(">II", data[16:24])
+    if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+        return struct.unpack("<HH", data[6:10])
+    return None
+
+
+def eb_is_junk(parts: list) -> bool:
+    """تجاهل ملفات النظام والمجلدات المخفية."""
+    for p in parts:
+        if p == "__MACOSX" or p.startswith(".") or p.lower() in ("thumbs.db", "desktop.ini"):
+            return True
+    return False
+
+
+def eb_decide_kind(path: str, ext: str, size: int, data: bytes, forced: Optional[str]):
+    """يرجع (النوع, سبب_الخطأ أو None)."""
+    if ext == ".json":
+        if forced == "emoji":
+            return "sticker", "ملفات Lottie (JSON) تُضاف كستكر فقط"
+        return "sticker", None
+    if forced == "sticker":
+        if ext not in EB_STICKER_EXTS:
+            return "sticker", f"صيغة {ext} غير مدعومة للستكرات"
+        return "sticker", None
+    if forced == "emoji":
+        return "emoji", None
+
+    folders = " ".join(p.lower() for p in re.split(r"[\\/]", path)[:-1])
+    if any(k in folders for k in EB_STICKER_HINTS) and ext in EB_STICKER_EXTS:
+        return "sticker", None
+    if any(k in folders for k in EB_EMOJI_HINTS):
+        return "emoji", None
+    if ext in (".jpg", ".jpeg", ".webp"):
+        return "emoji", None
+    if size > EB_EMOJI_MAX_BYTES:
+        return "sticker", None
+    dims = eb_image_size(data) if data else None
+    if dims and max(dims) >= EB_STICKER_MIN_DIM:
+        return "sticker", None
+    return "emoji", None
+
+
+def eb_make_item(path: str, size: int, data: bytes, forced: Optional[str]) -> Optional[EBItem]:
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in EB_ALL_EXTS:
+        return None
+    kind, err = eb_decide_kind(path, ext, size, data, forced)
+    if not err:
+        limit = EB_EMOJI_MAX_BYTES if kind == "emoji" else EB_STICKER_MAX_BYTES
+        if size > limit:
+            err = f"الحجم {size // 1024}KB أكبر من الحد المسموح ({limit // 1024}KB)"
+    return EBItem(path=path, data=data, size=size, ext=ext, kind=kind, error=err)
+
+
+# ---------- التحميل واستخراج الملفات ----------
+async def eb_ensure_public_host(url: str):
+    """حماية: منع الروابط التي تشير لعناوين داخلية (SSRF)."""
+    p = urlparse(url)
+    if p.scheme not in ("http", "https") or not p.hostname:
+        raise ValueError("الرابط غير صالح")
+    loop = asyncio.get_running_loop()
+    infos = await loop.getaddrinfo(
+        p.hostname, p.port or (443 if p.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    for info in infos:
+        if not ipaddress.ip_address(info[4][0]).is_global:
+            raise ValueError("الرابط يشير إلى عنوان داخلي غير مسموح")
+
+
+async def eb_download(url: str, limit: int):
+    """تحميل ملف من رابط (مع التحويلات) بحد أقصى للحجم. يرجع (الرابط_النهائي, البيانات)."""
+    timeout = aiohttp.ClientTimeout(total=180)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for _ in range(5):
+            await eb_ensure_public_host(url)
+            async with session.get(url, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("Location")
+                    if not loc:
+                        raise ValueError("تحويل غير صالح في الرابط")
+                    url = urljoin(url, loc)
+                    continue
+                if resp.status != 200:
+                    raise ValueError(f"فشل تحميل الرابط (HTTP {resp.status})")
+                if resp.content_length and resp.content_length > limit:
+                    raise ValueError("حجم الملف أكبر من الحد المسموح")
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buf.extend(chunk)
+                    if len(buf) > limit:
+                        raise ValueError("حجم الملف أكبر من الحد المسموح")
+                return url, bytes(buf)
+        raise ValueError("تحويلات كثيرة في الرابط")
+
+
+def eb_extract_zip(raw: bytes, forced: Optional[str]):
+    """استخراج الملفات الصالحة من zip. يرجع (items, ignored)."""
+    items, ignored, total = [], 0, 0
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        raise ValueError("الملف ليس أرشيف zip صالح")
+    with zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            path = info.filename.replace("\\", "/")
+            if eb_is_junk(path.split("/")):
+                continue
+            ext = os.path.splitext(path)[1].lower()
+            if ext not in EB_ALL_EXTS:
+                ignored += 1
+                continue
+            total += info.file_size
+            if total > EB_MAX_UNZIPPED_TOTAL:
+                break
+            data = b""
+            if info.file_size <= EB_STICKER_MAX_BYTES:     # لا نقرأ الملفات الضخمة
+                try:
+                    data = zf.read(info)
+                except Exception:
+                    items.append(EBItem(path, b"", info.file_size, ext, "emoji",
+                                        error="تعذر قراءة الملف (قد يكون مشفراً)"))
+                    continue
+            it = eb_make_item(path, info.file_size, data, forced)
+            if it:
+                items.append(it)
+    return items, ignored
+
+
+async def eb_collect(attachments, url: Optional[str], forced: Optional[str]):
+    """يجمع كل العناصر من المرفقات والرابط. يرجع (items, ignored)."""
+    items, ignored = [], 0
+
+    async def from_raw(name: str, raw: bytes):
+        nonlocal ignored
+        if raw[:4] == b"PK\x03\x04":                     # أرشيف zip
+            got, ign = await asyncio.to_thread(eb_extract_zip, raw, forced)
+            items.extend(got)
+            ignored += ign
+            return
+        it = eb_make_item(name, len(raw), raw, forced)
+        if it:
+            items.append(it)
+        else:
+            ignored += 1
+
+    for att in attachments:
+        ext = os.path.splitext(att.filename)[1].lower()
+        if ext != ".zip" and att.size > EB_STICKER_MAX_BYTES:    # ملف مفرد كبير: نرفضه بدون تحميله
+            it = eb_make_item(att.filename, att.size, b"", forced)
+            if it:
+                items.append(it)
+            else:
+                ignored += 1
+            continue
+        if ext == ".zip" and att.size > EB_MAX_ARCHIVE_BYTES:
+            raise ValueError(f"الأرشيف {att.filename} كبير جداً")
+        await from_raw(att.filename, await att.read())
+
+    if url:
+        final_url, raw = await eb_download(url, EB_MAX_ARCHIVE_BYTES)
+        fname = unquote(os.path.basename(urlparse(final_url).path)) or "file"
+        before = len(items)
+        await from_raw(fname, raw)
+        if len(items) == before:
+            raise ValueError("الرابط لا يحتوي zip ولا ملفات بصيغة مدعومة")
+    return items, ignored
+
+
+# ---------- الإيمبدات ----------
+def eb_accepted_embed(author) -> discord.Embed:
+    return discord.Embed(
+        title="✅ تم قبول الطلب",
+        description=f"بدأت معالجة طلب {author.mention}...\nجاري تحميل الملفات وتجهيزها.",
+        color=discord.Color.green())
+
+
+def eb_error_embed(text: str) -> discord.Embed:
+    return discord.Embed(title="❌ تعذر تنفيذ الطلب", description=text, color=discord.Color.red())
+
+
+def eb_status_embed(stats: EBStats, final: bool = False) -> discord.Embed:
+    if final:
+        if stats.ok == 0:
+            color, title = discord.Color.red(), "❌ انتهت العملية بدون إضافة أي عنصر"
+        elif stats.failed:
+            color, title = discord.Color.orange(), "⚠️ اكتملت العملية مع بعض الأخطاء"
+        else:
+            color, title = discord.Color.green(), "🎉 اكتملت العملية بنجاح"
+    else:
+        color, title = discord.Color.blurple(), "⏳ جاري الإضافة..."
+    done = stats.ok + stats.failed
+    e = discord.Embed(title=title, color=color)
+    e.add_field(name="📦 المطلوب إضافته",
+                value=f"😀 إيموجيات: **{stats.total_emoji}**\n🏷️ ستكرات: **{stats.total_sticker}**\n"
+                      f"المجموع: **{stats.total}**", inline=True)
+    e.add_field(name="✅ تمت إضافته",
+                value=f"😀 **{stats.ok_emoji}**  |  🏷️ **{stats.ok_sticker}**\nالمجموع: **{stats.ok}**",
+                inline=True)
+    e.add_field(name="❌ فشل / تم تخطيه", value=f"**{stats.failed}**", inline=True)
+    e.add_field(name="⏱️ الوقت الإجمالي" if final else "⏱️ الوقت المستغرق",
+                value=eb_fmt_time(stats.elapsed), inline=True)
+    e.add_field(name="التقدم", value=f"{eb_bar(done, stats.total)}  **{done}/{stats.total}**", inline=False)
+    if not final:
+        e.set_footer(text=f"الآن: {stats.current}")
+    elif stats.ignored:
+        e.set_footer(text=f"تم تجاهل {stats.ignored} ملف غير مدعوم داخل الأرشيف")
+    return e
+
+
+# ---------- منطق الإضافة ----------
+def eb_explain_http_error(e: discord.HTTPException):
+    """يرجع (السبب, نوع_الامتلاء أو None)."""
+    code = getattr(e, "code", 0)
+    if code == 30008:
+        return "امتلأت خانات الإيموجي في السيرفر", "emoji"
+    if code == 30039:
+        return "امتلأت خانات الستكرات في السيرفر", "sticker"
+    if code == 50035:
+        return f"ملف أو اسم غير صالح: {str(e.text)[:90]}", None
+    if e.status == 413:
+        return "حجم الملف أكبر من المسموح", None
+    return f"خطأ من ديسكورد ({e.status}): {str(e.text)[:90]}", None
+
+
+async def eb_add_items(guild: discord.Guild, items: list, stats: EBStats, reason: str):
+    emojis = await guild.fetch_emojis()
+    stickers = await guild.fetch_stickers()
+    used = {"static": sum(1 for e in emojis if not e.animated),
+            "anim": sum(1 for e in emojis if e.animated),
+            "sticker": len(stickers)}
+    taken_emoji = {e.name.lower() for e in emojis}
+    taken_sticker = {s.name.lower() for s in stickers}
+
+    def fail(it: EBItem, why: str):
+        stats.failures.append((it.name or it.path, it.kind, why))
+
+    for it in items:
+        it.name = eb_clean_name(it.path, it.kind, taken_emoji if it.kind == "emoji" else taken_sticker)
+        stats.current = it.name
+        if it.error:
+            fail(it, it.error)
+            continue
+        try:
+            if it.kind == "emoji":
+                slot = "anim" if it.animated else "static"
+                if used[slot] >= guild.emoji_limit:
+                    fail(it, "خانات الإيموجي المتحركة ممتلئة" if it.animated else "خانات الإيموجي الثابتة ممتلئة")
+                    continue
+                await guild.create_custom_emoji(name=it.name, image=it.data, reason=reason)
+                used[slot] += 1
+                stats.ok_emoji += 1
+            else:
+                if used["sticker"] >= guild.sticker_limit:
+                    fail(it, "خانات الستكرات ممتلئة")
+                    continue
+                await guild.create_sticker(
+                    name=it.name, description=it.name, emoji=EB_STICKER_TAG,
+                    file=discord.File(io.BytesIO(it.data), filename=f"{it.name}{it.ext}"), reason=reason)
+                used["sticker"] += 1
+                stats.ok_sticker += 1
+        except discord.Forbidden:
+            fail(it, "لا أملك صلاحية Manage Emojis and Stickers")
+        except discord.HTTPException as e:
+            why, full = eb_explain_http_error(e)
+            if full == "emoji":
+                used["static"] = used["anim"] = guild.emoji_limit
+            elif full == "sticker":
+                used["sticker"] = guild.sticker_limit
+            fail(it, why)
+        except Exception as e:      # أي خطأ غير متوقع لا يوقف بقية الملفات
+            fail(it, f"خطأ غير متوقع: {type(e).__name__}")
+        await asyncio.sleep(EB_ADD_DELAY)
+
+
+async def eb_live_updater(msg: discord.Message, stats: EBStats):
+    """يحدّث رسالة الحالة كل بضع ثوانٍ بدل كل عنصر لتجنب Rate Limit."""
+    try:
+        while True:
+            await asyncio.sleep(EB_EDIT_INTERVAL)
+            try:
+                await msg.edit(embed=eb_status_embed(stats))
+            except discord.HTTPException:
+                pass
+    except asyncio.CancelledError:
+        pass
+
+
+async def eb_run_job(channel, guild, author, attachments, url, forced):
+    lock = EB_LOCKS.setdefault(guild.id, asyncio.Lock())
+    if lock.locked():
+        return await channel.send(embed=eb_error_embed("يوجد طلب قيد التنفيذ في هذا السيرفر، انتظر حتى ينتهي."))
+    if not attachments and not url:
+        return await channel.send(embed=eb_error_embed(
+            "أرسل ملف `.zip` أو رابطاً مباشراً له، أو أرفق صور الإيموجيات/الستكرات مع الأمر."))
+    perms = guild.me.guild_permissions
+    if not (perms.manage_emojis_and_stickers or getattr(perms, "create_expressions", False)):
+        return await channel.send(embed=eb_error_embed("البوت يحتاج صلاحية **Manage Expressions / Emojis and Stickers**."))
+
+    async with lock:
+        await channel.send(embed=eb_accepted_embed(author))
+        try:
+            items, ignored = await eb_collect(attachments, url, forced)
+        except ValueError as e:
+            return await channel.send(embed=eb_error_embed(str(e)))
+        except Exception as e:
+            return await channel.send(embed=eb_error_embed(f"تعذر قراءة الملفات: {type(e).__name__}"))
+        if not items:
+            return await channel.send(embed=eb_error_embed("لم أجد أي ملفات صالحة (PNG / JPG / WEBP / GIF / JSON)."))
+        items = items[:EB_MAX_ITEMS]
+
+        stats = EBStats(ignored=ignored)
+        stats.total_emoji = sum(1 for i in items if i.kind == "emoji")
+        stats.total_sticker = len(items) - stats.total_emoji
+
+        status_msg = await channel.send(embed=eb_status_embed(stats))
+        updater = asyncio.create_task(eb_live_updater(status_msg, stats))
+        try:
+            await eb_add_items(guild, items, stats, reason=f"إضافة جماعية بواسطة {author} ({author.id})")
+        finally:
+            stats.finished = time.monotonic()
+            updater.cancel()
+
+        final = eb_status_embed(stats, final=True)
+        try:
+            await status_msg.edit(embed=final)
+        except discord.HTTPException:
+            pass
+        kwargs = {}
+        if stats.failures:
+            text = "\n".join(f"[{k}] {n} — {r}" for n, k, r in stats.failures)
+            preview = "\n".join(text.split("\n")[:10])[:1000]
+            final.add_field(name="أسباب الفشل (أول 10)", value=f"```{preview}```", inline=False)
+            if stats.failed > 10:
+                kwargs["file"] = discord.File(io.BytesIO(text.encode("utf-8")), filename="failures.txt")
+        await channel.send(content=author.mention, embed=final, **kwargs)
+
+
+# ---------- ربط الأمر بالبوت (من الخارج، بدون تعديل كلاس TempVoiceBot) ----------
+eb_tree = app_commands.CommandTree(bot)
+
+
+@eb_tree.command(name="اضف", description="إضافة إيموجيات وستكرات دفعة واحدة من zip أو رابط أو صور")
+@app_commands.guild_only()
+@app_commands.checks.has_permissions(manage_emojis_and_stickers=True)
+@app_commands.describe(file="ملف zip أو صورة", file2="صورة إضافية", file3="صورة إضافية",
+                       file4="صورة إضافية", file5="صورة إضافية",
+                       url="رابط مباشر لملف zip", kind="تحديد النوع (الافتراضي: تلقائي)")
+@app_commands.rename(file="ملف", file2="ملف2", file3="ملف3", file4="ملف4", file5="ملف5",
+                     url="رابط", kind="النوع")
+@app_commands.choices(kind=[
+    app_commands.Choice(name="تلقائي", value="auto"),
+    app_commands.Choice(name="ايموجي", value="emoji"),
+    app_commands.Choice(name="ستكر", value="sticker"),
+])
+async def eb_slash_add(interaction: discord.Interaction,
+                       file: Optional[discord.Attachment] = None,
+                       file2: Optional[discord.Attachment] = None,
+                       file3: Optional[discord.Attachment] = None,
+                       file4: Optional[discord.Attachment] = None,
+                       file5: Optional[discord.Attachment] = None,
+                       url: Optional[str] = None,
+                       kind: Optional[app_commands.Choice[str]] = None):
+    attachments = [a for a in (file, file2, file3, file4, file5) if a]
+    forced = kind.value if kind and kind.value != "auto" else None
+    await interaction.response.send_message("📨 استلمت طلبك، تابع الرسائل في الروم...", ephemeral=True)
+    await eb_run_job(interaction.channel, interaction.guild, interaction.user, attachments, url, forced)
+
+
+@eb_tree.error
+async def eb_slash_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "تحتاج صلاحية **Manage Expressions / Emojis and Stickers** لاستخدام هذا الأمر."
+    else:
+        msg = f"حدث خطأ: {type(error).__name__}"
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+# مزامنة أمر السلاش عند التشغيل (نلف setup_hook الأصلي دون تعديله)
+_eb_orig_setup_hook = bot.setup_hook
+
+
+async def _eb_setup_hook():
+    await _eb_orig_setup_hook()
+    try:
+        if EB_GUILD_ID:
+            eb_tree.copy_global_to(guild=discord.Object(id=EB_GUILD_ID))
+            await eb_tree.sync(guild=discord.Object(id=EB_GUILD_ID))
+        else:
+            await eb_tree.sync()
+    except discord.HTTPException as e:
+        log.warning("slash sync failed: %s", e)
+
+
+bot.setup_hook = _eb_setup_hook
+
+
+# الأمر النصي بدون بادئة: "اضف" مع مرفقات / رابط / ايموجي / ستكر  (نفس أسلوب أوامرك)
+_eb_orig_on_message = bot.on_message
+
+
+async def _eb_on_message(message: discord.Message):
+    if message.guild and not message.author.bot:
+        tokens = message.content.split()
+        if tokens and tokens[0] in EB_COMMAND_WORDS:
+            perms = message.author.guild_permissions
+            if perms.manage_emojis_and_stickers or getattr(perms, "create_expressions", False):
+                url, forced = None, None
+                for t in tokens[1:]:
+                    if t.lower().startswith(("http://", "https://")):
+                        url = t.strip("<>")
+                    elif t.lower() in EB_KIND_WORDS:
+                        forced = EB_KIND_WORDS[t.lower()]
+                asyncio.create_task(eb_run_job(message.channel, message.guild, message.author,
+                                               list(message.attachments), url, forced))
+                return      # تم التعامل معها، لا نمررها لبقية أوامر التمب فويس
+    await _eb_orig_on_message(message)
+
+
+bot.on_message = _eb_on_message
+# ============================================================ نهاية إضافة الإيموجيات والستكرات
+
+
 # ============================================================ التشغيل
 if __name__ == "__main__":
     if not TOKEN:
@@ -907,4 +1452,3 @@ if __name__ == "__main__":
     if not CREATE_CHANNEL_ID:
         raise SystemExit("ضع آيدي روم الإنشاء في متغير البيئة CREATE_CHANNEL_ID")
     bot.run(TOKEN, log_handler=None)
-
