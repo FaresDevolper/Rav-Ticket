@@ -21,9 +21,9 @@ from discord.http import Route
 
 # ============================================================ الإعدادات
 TOKEN = os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN")
-CREATE_CHANNEL_ID = int(os.getenv("CREATE_CHANNEL_ID", "0"))  # روم "اضغط لإنشاء روم"
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))        # روم اللوج
-CATEGORY_ID = int(os.getenv("CATEGORY_ID", "0"))              # 0 = نفس كاتيجوري روم الإنشاء
+CREATE_CHANNEL_ID = int(os.getenv("CREATE_CHANNEL_ID", "1573552537288835092"))  # روم "اضغط لإنشاء روم"
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1573554152800260116"))        # روم اللوج
+CATEGORY_ID = int(os.getenv("CATEGORY_ID", "1573552438324240494"))              # 0 = نفس كاتيجوري روم الإنشاء
 PORT = int(os.getenv("PORT", "8080"))
 
 ACCENT_COLOR = 0x333153        # لون شريط اللوحة
@@ -1651,6 +1651,373 @@ async def _ids_on_message(message: discord.Message):
 
 bot.on_message = _ids_on_message
 # ============================================================ نهاية إضافة أمر ايديات
+
+
+# ============================================================ إضافة: كشف المكلبة (ModAbuse)
+# الصق هذا القسم كاملاً قبل قسم "التشغيل" (قبل: if __name__ == "__main__":)
+# لا يعدّل أي سطر من كودك الأصلي، يربط نفسه بالبوت من الخارج فقط.
+# ملاحظة: الكود الأصلي كان Cog (يحتاج commands.Bot) وبوتك discord.Client،
+# فالمنطق نفسه بدون أي تغيير، والتغيير الوحيد هو طريقة الربط بالأحداث (في الأسفل).
+# يحتاج: صلاحية View Audit Log + Manage Roles + Mute/Deafen Members للبوت، ورتبة البوت أعلى من الرولات المسحوبة.
+
+import json
+from datetime import timedelta
+
+# ================= إعدادات كشف المكلبة =================
+MOD_ABUSE_LOG_CHANNEL_ID = 0   # <<< ايدي روم اللوج
+MOVE_ROLE_ID = 0               # <<< ايدي رول السحب
+MUTE_ROLE_ID = 0               # <<< ايدي رول الميوت
+DEAFEN_ROLE_ID = 0             # <<< ايدي رول الدفن (الديفن)
+UNDO_VICTIM_PUNISHMENT = True  # يفك الميوت/الديفن عن الضحية تلقائياً (False لإيقافه)
+
+MOD_ABUSE_DEFAULT_MESSAGE = "برا رولك يا مكلبجي"
+MOD_ABUSE_CONFIG_FILE = "mod_abuse_config.json"
+MOD_ABUSE_CHANGE_TRIGGER = "تغيير الرسالة"
+MOD_ABUSE_RESTORE_TRIGGER = "نو مكلبة"
+# =======================================================
+
+
+class ModAbuse:
+    def __init__(self, bot):
+        self.bot = bot
+        self.message = MOD_ABUSE_DEFAULT_MESSAGE
+        self.removed = {}  # user_id(str) -> [role ids]
+        self._cooldown = {}
+        self._pending = set()
+        self._load()
+
+    # ---------- حفظ وتحميل ----------
+    def _load(self):
+        try:
+            with open(MOD_ABUSE_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            msg = data.get("message")
+            if isinstance(msg, str) and msg.strip():
+                self.message = msg
+            removed = data.get("removed")
+            if isinstance(removed, dict):
+                self.removed = removed
+        except Exception:
+            pass
+
+    def _save(self):
+        try:
+            with open(MOD_ABUSE_CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"message": self.message, "removed": self.removed},
+                    f,
+                    ensure_ascii=False,
+                )
+        except Exception as e:
+            print(f"[ModAbuse] فشل الحفظ: {e}")
+
+    # ---------- البحث عن المشرف اللي نفّذ الميوت/الديفن ----------
+    async def _find_executor(self, guild, member, muted, deafened):
+        for _ in range(4):
+            try:
+                async for entry in guild.audit_logs(
+                    limit=15, action=discord.AuditLogAction.member_update
+                ):
+                    if entry.target is None or entry.target.id != member.id:
+                        continue
+                    if discord.utils.utcnow() - entry.created_at > timedelta(seconds=15):
+                        continue
+                    after = entry.after
+                    if (muted and getattr(after, "mute", None) is True) or (
+                        deafened and getattr(after, "deaf", None) is True
+                    ):
+                        return entry.user
+            except discord.Forbidden:
+                print("[ModAbuse] البوت ما عنده صلاحية View Audit Log")
+                return None
+            except discord.HTTPException:
+                pass
+            await asyncio.sleep(1)
+        return None
+
+    # ---------- سحب الرولات من المشرف ----------
+    async def _strip_roles(self, guild, executor_id):
+        """يرجع (قائمة الرولات المسحوبة, نجح؟)"""
+        member = guild.get_member(executor_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(executor_id)
+            except discord.HTTPException:
+                return [], False
+
+        role_ids = [r for r in (MOVE_ROLE_ID, MUTE_ROLE_ID, DEAFEN_ROLE_ID) if r]
+        roles = [guild.get_role(rid) for rid in role_ids]
+        to_remove = [r for r in roles if r is not None and r in member.roles]
+        if not to_remove:
+            return [], True
+
+        try:
+            await member.remove_roles(
+                *to_remove, reason="مكلبة: ميوت/ديفن على شخص في روم المشرف مو موجود فيه"
+            )
+        except (discord.Forbidden, discord.HTTPException) as e:
+            print(f"[ModAbuse] فشل سحب الرولات: {e}")
+            return [], False
+
+        saved = set(self.removed.get(str(executor_id), []))
+        saved.update(r.id for r in to_remove)
+        self.removed[str(executor_id)] = list(saved)
+        self._save()
+        return to_remove, True
+
+    # ---------- مراقبة الميوت والديفن ----------
+    async def on_voice_state_update(self, member, before, after):
+        if before.channel is None or after.channel is None:
+            return
+        if before.channel.id != after.channel.id:
+            return
+
+        muted = after.mute and not before.mute
+        deafened = after.deaf and not before.deaf
+        if not (muted or deafened):
+            return
+
+        channel = after.channel
+        guild = member.guild
+        present_ids = set(channel.voice_states.keys())
+
+        await asyncio.sleep(1)
+
+        executor = await self._find_executor(guild, member, muted, deafened)
+        if executor is None:
+            return
+        if getattr(executor, "bot", False) or executor.id == member.id:
+            return
+        if executor.id in present_ids:
+            return  # المشرف داخل نفس الروم، عادي
+
+        # منع التكرار (ميوت + ديفن بنفس اللحظة)
+        key = (executor.id, member.id)
+        now = discord.utils.utcnow()
+        last = self._cooldown.get(key)
+        if last and (now - last) < timedelta(seconds=8):
+            return
+        self._cooldown[key] = now
+
+        if muted and deafened:
+            action = "ميوت + ديفن"
+        elif muted:
+            action = "ميوت"
+        else:
+            action = "ديفن"
+
+        # 1) سحب الرولات فوراً
+        removed_roles, roles_ok = await self._strip_roles(guild, executor.id)
+
+        # 2) فك العقوبة عن الضحية
+        victim_fixed = False
+        if UNDO_VICTIM_PUNISHMENT:
+            kwargs = {}
+            if muted:
+                kwargs["mute"] = False
+            if deafened:
+                kwargs["deafen"] = False
+            try:
+                await member.edit(**kwargs, reason="مكلبة: فك عقوبة غير مشروعة")
+                victim_fixed = True
+            except (discord.Forbidden, discord.HTTPException) as e:
+                print(f"[ModAbuse] فشل فك العقوبة عن الضحية: {e}")
+
+        # 3) المنشن داخل الروم
+        try:
+            await channel.send(
+                f"<@{executor.id}> {self.message}",
+                allowed_mentions=discord.AllowedMentions(
+                    users=[discord.Object(id=executor.id)],
+                    roles=False,
+                    everyone=False,
+                ),
+            )
+        except (discord.Forbidden, discord.HTTPException) as e:
+            print(f"[ModAbuse] فشل الإرسال في الروم: {e}")
+
+        # 4) اللوج
+        if MOD_ABUSE_LOG_CHANNEL_ID:
+            log_channel = self.bot.get_channel(MOD_ABUSE_LOG_CHANNEL_ID)
+            if log_channel is None:
+                try:
+                    log_channel = await self.bot.fetch_channel(MOD_ABUSE_LOG_CHANNEL_ID)
+                except Exception:
+                    log_channel = None
+            if log_channel is not None:
+                roles_text = (
+                    "، ".join(r.mention for r in removed_roles)
+                    if removed_roles
+                    else ("ما عنده رولات تنسحب" if roles_ok else "فشل السحب (تأكد من صلاحيات ورتبة البوت)")
+                )
+                embed = discord.Embed(
+                    title="🚨 مكلبة مشرف",
+                    color=discord.Color.red(),
+                    timestamp=now,
+                )
+                embed.add_field(name="المشرف", value=f"<@{executor.id}>", inline=True)
+                embed.add_field(name="العضو", value=member.mention, inline=True)
+                embed.add_field(name="الإجراء", value=action, inline=True)
+                embed.add_field(name="الروم", value=channel.mention, inline=True)
+                embed.add_field(name="الرولات المسحوبة", value=roles_text, inline=False)
+                if UNDO_VICTIM_PUNISHMENT:
+                    embed.add_field(
+                        name="فك العقوبة عن العضو",
+                        value="تم ✅" if victim_fixed else "فشل ❌",
+                        inline=True,
+                    )
+                try:
+                    await log_channel.send(
+                        embed=embed, allowed_mentions=discord.AllowedMentions.none()
+                    )
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    print(f"[ModAbuse] فشل الإرسال في اللوج: {e}")
+
+    # ---------- الأوامر (تغيير الرسالة + نو مكلبة) ----------
+    async def on_message(self, message):
+        if message.author.bot or message.guild is None:
+            return
+        content = message.content.strip().lstrip("!.-+$?;/#").strip()
+
+        if content == MOD_ABUSE_CHANGE_TRIGGER:
+            if message.author.guild_permissions.administrator:
+                await self._handle_change(message)
+        elif content.startswith(MOD_ABUSE_RESTORE_TRIGGER):
+            if message.author.guild_permissions.administrator:
+                await self._handle_restore(message)
+
+    async def _handle_change(self, message):
+        key = (message.author.id, message.channel.id)
+        if key in self._pending:
+            return
+        self._pending.add(key)
+        try:
+            await message.reply(
+                "اكتب الرسالة اللي تبيها تجي مع منشن المكلبجي (عندك 60 ثانية).\n"
+                "اكتب `الغاء` للإلغاء.",
+                mention_author=False,
+            )
+
+            def check(m):
+                return (
+                    m.author.id == message.author.id
+                    and m.channel.id == message.channel.id
+                )
+
+            try:
+                reply = await self.bot.wait_for("message", check=check, timeout=60)
+            except asyncio.TimeoutError:
+                await message.channel.send("انتهى الوقت، ما تغيّرت الرسالة.")
+                return
+
+            new_msg = reply.content.strip()
+            if not new_msg or new_msg == "الغاء":
+                await reply.reply("تم الإلغاء.", mention_author=False)
+                return
+            if len(new_msg) > 1500:
+                await reply.reply("الرسالة طويلة، الحد 1500 حرف.", mention_author=False)
+                return
+
+            self.message = new_msg
+            self._save()
+            await reply.reply(
+                f"تم تغيير الرسالة ✅\n{new_msg}",
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        finally:
+            self._pending.discard(key)
+
+    async def _handle_restore(self, message):
+        if not message.mentions:
+            await message.reply(
+                "منشن الشخص مع الأمر، مثال: `نو مكلبة @الشخص`",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0]
+        saved_ids = self.removed.get(str(target.id), [])
+        if not saved_ids:
+            await message.reply(
+                "هذا الشخص ما انسحبت منه رولات من البوت.",
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
+        guild = message.guild
+        member = guild.get_member(target.id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(target.id)
+            except discord.HTTPException:
+                await message.reply("ما لقيت الشخص في السيرفر .", mention_author=False)
+                return
+
+        roles = [guild.get_role(rid) for rid in saved_ids]
+        roles = [r for r in roles if r is not None]
+        try:
+            await member.add_roles(*roles, reason=f"نو مكلبة بواسطة {message.author}")
+        except (discord.Forbidden, discord.HTTPException) as e:
+            print(f"[ModAbuse] فشل إرجاع الرولات: {e}")
+            await message.reply(
+                "ما قدرت أرجع الرولات ، تأكد إن رتبة البوت أعلى منها وعنده Manage Roles.",
+                mention_author=False,
+            )
+            return
+
+        self.removed.pop(str(target.id), None)
+        self._save()
+        await message.reply(
+            f"تم إرجاع الرولات لـ {member.mention} ✅ ({'، '.join(r.name for r in roles)})",
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+# ---------- ربط المكلبة بالبوت (من الخارج، بدون تعديل كلاس TempVoiceBot) ----------
+mod_abuse = ModAbuse(bot)
+_ma_tasks: set = set()
+
+
+def _ma_spawn(coro):
+    """يشغّل مهمة المكلبة بالخلفية عشان ما تعطّل أحداث التمب فويس، ويسجّل أي خطأ."""
+    task = asyncio.create_task(coro)
+    _ma_tasks.add(task)
+
+    def _done(t):
+        _ma_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            log.warning("[ModAbuse] error: %r", t.exception())
+
+    task.add_done_callback(_done)
+
+
+# أحداث الصوت: نلف on_voice_state_update الحالي دون تعديله
+_ma_prev_on_voice_state_update = bot.on_voice_state_update
+
+
+async def _ma_on_voice_state_update(member, before, after):
+    _ma_spawn(mod_abuse.on_voice_state_update(member, before, after))
+    await _ma_prev_on_voice_state_update(member, before, after)
+
+
+bot.on_voice_state_update = _ma_on_voice_state_update
+
+
+# أوامر الرسائل (تغيير الرسالة / نو مكلبة): نلف on_message الحالي دون تعديله
+_ma_prev_on_message = bot.on_message
+
+
+async def _ma_on_message(message: discord.Message):
+    if message.guild and not message.author.bot:
+        _ma_spawn(mod_abuse.on_message(message))
+    await _ma_prev_on_message(message)
+
+
+bot.on_message = _ma_on_message
+# ============================================================ نهاية إضافة كشف المكلبة
 
 
 # ============================================================ التشغيل
