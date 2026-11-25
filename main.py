@@ -1664,11 +1664,12 @@ import json
 from datetime import timedelta
 
 # ================= إعدادات كشف المكلبة =================
-MOD_ABUSE_LOG_CHANNEL_ID = 0   # <<< ايدي روم اللوج
-MOVE_ROLE_ID = 0               # <<< ايدي رول السحب
-MUTE_ROLE_ID = 0               # <<< ايدي رول الميوت
-DEAFEN_ROLE_ID = 0             # <<< ايدي رول الدفن (الديفن)
+MOD_ABUSE_LOG_CHANNEL_ID = 1550546384787087410   # <<< ايدي روم اللوج
+MOVE_ROLE_ID = 1460374666748105036              # <<< ايدي رول السحب
+MUTE_ROLE_ID = 1487545475707044052 1556615926059892838 1511160154085658805 1507815334395121865 1543621789433733120 1465057908554334220 1563995047278674000 1563994711864377567 1563994354937233449 1487545475707044052                # <<< ايدي رول الميوت
+DEAFEN_ROLE_ID = 1487545475707044052             # <<< ايدي رول الدفن (الديفن)
 UNDO_VICTIM_PUNISHMENT = True  # يفك الميوت/الديفن عن الضحية تلقائياً (False لإيقافه)
+STRIP_BY_PERMISSION = True     # يسحب أيضاً أي رول عند المشرف يعطي صلاحية سحب/ميوت/ديفن (حتى لو الآيدي فوق غلط أو ناقص)
 
 MOD_ABUSE_DEFAULT_MESSAGE = "برا رولك يا مكلبجي"
 MOD_ABUSE_CONFIG_FILE = "mod_abuse_config.json"
@@ -1737,19 +1738,57 @@ class ModAbuse:
 
     # ---------- سحب الرولات من المشرف ----------
     async def _strip_roles(self, guild, executor_id):
-        """يرجع (قائمة الرولات المسحوبة, نجح؟)"""
+        """يرجع (قائمة الرولات المسحوبة, نجح؟, ملاحظات للتشخيص)"""
+        notes = []
         member = guild.get_member(executor_id)
         if member is None:
             try:
                 member = await guild.fetch_member(executor_id)
             except discord.HTTPException:
-                return [], False
+                return [], False, ["ما قدرت أجيب المشرف من السيرفر"]
 
-        role_ids = [r for r in (MOVE_ROLE_ID, MUTE_ROLE_ID, DEAFEN_ROLE_ID) if r]
-        roles = [guild.get_role(rid) for rid in role_ids]
-        to_remove = [r for r in roles if r is not None and r in member.roles]
+        # 1) الرولات المحددة بالآيديات
+        candidates = {}
+        for label, rid in (("السحب", MOVE_ROLE_ID), ("الميوت", MUTE_ROLE_ID), ("الدفن", DEAFEN_ROLE_ID)):
+            if not rid:
+                notes.append(f"آيدي رول {label} = 0 (ما انحط في الإعدادات)")
+                continue
+            role = guild.get_role(rid)
+            if role is None:
+                notes.append(f"رول {label} ({rid}) غير موجود في هذا السيرفر، تأكد من الآيدي")
+                continue
+            if role in member.roles:
+                candidates[role.id] = role
+
+        # 2) أي رول عند المشرف يعطي صلاحية سحب/ميوت/ديفن (القانون يطبق على الكل)
+        if STRIP_BY_PERMISSION:
+            for role in member.roles:
+                if role.is_default() or role.managed:
+                    continue
+                perms = role.permissions
+                if not (perms.move_members or perms.mute_members or perms.deafen_members):
+                    continue
+                if perms.administrator and role.id not in candidates:
+                    notes.append(f"رول {role.name} أدمن، ما أسحبه تلقائياً (حطه في الآيديات لو تبيه ينسحب)")
+                    continue
+                candidates[role.id] = role
+
+        if not candidates:
+            notes.append("المشرف ما عنده أي رول سحب/ميوت/ديفن يتسحب منه")
+            return [], True, notes
+
+        # 3) فحص ترتيب رتبة البوت
+        me = guild.me
+        to_remove = []
+        ok = True
+        for role in candidates.values():
+            if role.managed or role.position >= me.top_role.position:
+                ok = False
+                notes.append(f"ما أقدر أسحب {role.name}: رتبة البوت لازم تكون أعلى منه في ترتيب الرولات")
+            else:
+                to_remove.append(role)
         if not to_remove:
-            return [], True
+            return [], False, notes
 
         try:
             await member.remove_roles(
@@ -1757,13 +1796,14 @@ class ModAbuse:
             )
         except (discord.Forbidden, discord.HTTPException) as e:
             print(f"[ModAbuse] فشل سحب الرولات: {e}")
-            return [], False
+            notes.append(f"فشل السحب من ديسكورد: {type(e).__name__} (تأكد من Manage Roles ومن رتبة البوت)")
+            return [], False, notes
 
         saved = set(self.removed.get(str(executor_id), []))
         saved.update(r.id for r in to_remove)
         self.removed[str(executor_id)] = list(saved)
         self._save()
-        return to_remove, True
+        return to_remove, ok, notes
 
     # ---------- مراقبة الميوت والديفن ----------
     async def on_voice_state_update(self, member, before, after):
@@ -1807,7 +1847,9 @@ class ModAbuse:
             action = "ديفن"
 
         # 1) سحب الرولات فوراً
-        removed_roles, roles_ok = await self._strip_roles(guild, executor.id)
+        removed_roles, roles_ok, strip_notes = await self._strip_roles(guild, executor.id)
+        for n in strip_notes:
+            print(f"[ModAbuse] {n}")
 
         # 2) فك العقوبة عن الضحية
         victim_fixed = False
@@ -1860,6 +1902,8 @@ class ModAbuse:
                 embed.add_field(name="الإجراء", value=action, inline=True)
                 embed.add_field(name="الروم", value=channel.mention, inline=True)
                 embed.add_field(name="الرولات المسحوبة", value=roles_text, inline=False)
+                if strip_notes:
+                    embed.add_field(name="ملاحظات", value="\n".join(f"• {n}" for n in strip_notes)[:1000], inline=False)
                 if UNDO_VICTIM_PUNISHMENT:
                     embed.add_field(
                         name="فك العقوبة عن العضو",
@@ -1952,7 +1996,7 @@ class ModAbuse:
             try:
                 member = await guild.fetch_member(target.id)
             except discord.HTTPException:
-                await message.reply("ما لقيت الشخص في السيرفر .", mention_author=False)
+                await message.reply("ما لقيت الشخص في السيرفر.", mention_author=False)
                 return
 
         roles = [guild.get_role(rid) for rid in saved_ids]
@@ -1962,7 +2006,7 @@ class ModAbuse:
         except (discord.Forbidden, discord.HTTPException) as e:
             print(f"[ModAbuse] فشل إرجاع الرولات: {e}")
             await message.reply(
-                "ما قدرت أرجع الرولات ، تأكد إن رتبة البوت أعلى منها وعنده Manage Roles.",
+                "ما قدرت أرجع الرولات، تأكد إن رتبة البوت أعلى منها وعنده Manage Roles.",
                 mention_author=False,
             )
             return
