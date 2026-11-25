@@ -21,9 +21,9 @@ from discord.http import Route
 
 # ============================================================ الإعدادات
 TOKEN = os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN")
-CREATE_CHANNEL_ID = int(os.getenv("CREATE_CHANNEL_ID", "1573552537288835092"))  # روم "اضغط لإنشاء روم"
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1573554152800260116"))        # روم اللوج
-CATEGORY_ID = int(os.getenv("CATEGORY_ID", "1573552438324240494"))              # 0 = نفس كاتيجوري روم الإنشاء
+CREATE_CHANNEL_ID = int(os.getenv("CREATE_CHANNEL_ID", "0"))  # روم "اضغط لإنشاء روم"
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))        # روم اللوج
+CATEGORY_ID = int(os.getenv("CATEGORY_ID", "0"))              # 0 = نفس كاتيجوري روم الإنشاء
 PORT = int(os.getenv("PORT", "8080"))
 
 ACCENT_COLOR = 0x333153        # لون شريط اللوحة
@@ -1665,8 +1665,19 @@ from datetime import timedelta
 
 # ================= إعدادات كشف المكلبة =================
 MOD_ABUSE_LOG_CHANNEL_ID = 1550546384787087410   # <<< ايدي روم اللوج
-MOVE_ROLE_ID = 1460374666748105036              # <<< ايدي رول السحب
-MUTE_ROLE_ID = 1487545475707044052 1556615926059892838 1511160154085658805 1507815334395121865 1543621789433733120 1465057908554334220 1563995047278674000 1563994711864377567 1563994354937233449 1487545475707044052                # <<< ايدي رول الميوت
+# كل واحد منها يقبل آيدي واحد أو أكثر بين قوسين وفواصل، مثال: MUTE_ROLE_ID = [111111111111111111, 222222222222222222]
+MOVE_ROLE_ID = 1460374666748105036               # <<< ايدي رول السحب
+MUTE_ROLE_ID = [                # <<< ايدي رول الميوت
+    1487545475707044052,
+    1556615926059892838,
+    1511160154085658805,
+    1507815334395121865,
+    1543621789433733120,
+    1465057908554334220,
+    1563995047278674000,
+    1563994711864377567,
+    1563994354937233449,
+]
 DEAFEN_ROLE_ID = 1487545475707044052             # <<< ايدي رول الدفن (الديفن)
 UNDO_VICTIM_PUNISHMENT = True  # يفك الميوت/الديفن عن الضحية تلقائياً (False لإيقافه)
 STRIP_BY_PERMISSION = True     # يسحب أيضاً أي رول عند المشرف يعطي صلاحية سحب/ميوت/ديفن (حتى لو الآيدي فوق غلط أو ناقص)
@@ -1676,6 +1687,13 @@ MOD_ABUSE_CONFIG_FILE = "mod_abuse_config.json"
 MOD_ABUSE_CHANGE_TRIGGER = "تغيير الرسالة"
 MOD_ABUSE_RESTORE_TRIGGER = "نو مكلبة"
 # =======================================================
+
+
+def _ma_as_ids(value) -> list:
+    """يقبل آيدي واحد أو قائمة آيديات ويرجع قائمة أرقام صحيحة."""
+    if isinstance(value, (list, tuple, set)):
+        return [int(x) for x in value if x]
+    return [int(value)] if value else []
 
 
 class ModAbuse:
@@ -1749,16 +1767,18 @@ class ModAbuse:
 
         # 1) الرولات المحددة بالآيديات
         candidates = {}
-        for label, rid in (("السحب", MOVE_ROLE_ID), ("الميوت", MUTE_ROLE_ID), ("الدفن", DEAFEN_ROLE_ID)):
-            if not rid:
+        for label, value in (("السحب", MOVE_ROLE_ID), ("الميوت", MUTE_ROLE_ID), ("الدفن", DEAFEN_ROLE_ID)):
+            ids = _ma_as_ids(value)
+            if not ids:
                 notes.append(f"آيدي رول {label} = 0 (ما انحط في الإعدادات)")
                 continue
-            role = guild.get_role(rid)
-            if role is None:
-                notes.append(f"رول {label} ({rid}) غير موجود في هذا السيرفر، تأكد من الآيدي")
-                continue
-            if role in member.roles:
-                candidates[role.id] = role
+            for rid in ids:
+                role = guild.get_role(rid)
+                if role is None:
+                    notes.append(f"رول {label} ({rid}) غير موجود في هذا السيرفر، تأكد من الآيدي")
+                    continue
+                if role in member.roles:
+                    candidates[role.id] = role
 
         # 2) أي رول عند المشرف يعطي صلاحية سحب/ميوت/ديفن (القانون يطبق على الكل)
         if STRIP_BY_PERMISSION:
