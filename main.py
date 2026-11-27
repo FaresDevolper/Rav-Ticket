@@ -13,6 +13,7 @@ import importlib
 import logging
 import os
 import re
+import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -2114,6 +2115,68 @@ bot.on_message = _ma_on_message
 # أي بوت ما تحط له توكن ينتخطى بدون ما يوقف الباقي، وأي خطأ في بوت ما يأثر على غيره.
 EXTRA_BOTS = ["bots.testme", "bots.uno", "bots.events"]
 
+# --- بوتات حماية القذف الصوتية (حتى 5 نسخ) ---
+# تشتغل في عملية منفصلة (python -m voiceguard) ما ترى إلا متغيرات GUARD_*:
+#   GUARD_TOKEN_1..5 + GUARD_ROOM_1..5 ، ومعها GUARD_GUILD_ID و GUARD_LOG_CHANNEL_ID و GUARD_STT_API_KEY
+# كذا توكنات بقية البوتات ما تنكشف لمكتبات الصوت، وأي مشكلة فيها ما توقف باقي البوتات.
+_GUARD_ENV_KEEP = {
+    "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "VIRTUAL_ENV", "PYTHONPATH",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "LD_LIBRARY_PATH",
+}
+
+
+def _guard_env() -> dict:
+    env = {k: v for k, v in os.environ.items() if k in _GUARD_ENV_KEEP or k.startswith("GUARD_")}
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+def _has_guard_config() -> bool:
+    import re
+    return any(re.fullmatch(r"GUARD_TOKEN_\d+", k) and os.environ.get(k, "").strip() for k in os.environ)
+
+
+async def _run_voice_guard():
+    """يشغّل ويراقب عملية بوتات القذف. لو سقطت يعيدها بانتظار متزايد (20 ثانية -> 5 دقايق)."""
+    delay = 20
+    while True:
+        started = time.monotonic()
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "voiceguard",
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                env=_guard_env(),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            log.info("[VoiceGuard] بدأت العملية (pid %s)", proc.pid)
+            assert proc.stdout is not None
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", "replace").rstrip()
+                if line:
+                    log.info("[VoiceGuard] %s", line)
+            code = await proc.wait()
+        except asyncio.CancelledError:
+            if proc and proc.returncode is None:
+                proc.terminate()
+            raise
+        except BaseException:
+            log.exception("[VoiceGuard] فشل تشغيل العملية")
+            code = 1
+
+        if code == 0:
+            log.info("[VoiceGuard] انتهت بشكل طبيعي")
+            return
+        if code in (2, 3):
+            log.error("[VoiceGuard] توقفت بخطأ دائم (كود %s)، راجع الأسطر اللي فوق. ما راح تُعاد تلقائياً", code)
+            return
+        if time.monotonic() - started > 600:
+            delay = 20
+        log.error("[VoiceGuard] سقطت العملية (كود %s)، إعادة التشغيل بعد %s ثانية", code, delay)
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 300)
+
 
 async def _run_client(name: str, client: discord.Client, token: str):
     """يشغّل بوت واحد. أي خطأ فيه يُسجَّل فقط ولا يوقف البوتات الثانية."""
@@ -2160,6 +2223,10 @@ async def run_all():
             log.exception("[%s] فشل إنشاء البوت، تم تخطي هذا البوت", name)
             continue
         jobs.append(_run_client(name, client, token))
+
+    # --- حماية القذف (عملية منفصلة) ---
+    if _has_guard_config():
+        jobs.append(_run_voice_guard())
 
     if not jobs:
         log.error("ما فيه أي بوت يشتغل، تأكد من التوكنات في Environment Variables")

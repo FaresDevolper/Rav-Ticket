@@ -1,0 +1,3 @@
+# إصلاح فك تشفير DAVE لاستقبال الصوت. مشروع صغير وجديد من شخص واحد، وما قدرت أراجع كوده.
+# ما يتثبت إلا إذا حطيت أمره في Build Command. شف الشرح في env.example
+git+https://github.com/omarthailand2231/voice-recv-dave

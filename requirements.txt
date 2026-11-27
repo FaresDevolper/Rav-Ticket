@@ -1,5 +1,6 @@
-discord.py>=2.6.0
+discord.py[voice]>=2.7.1
 aiohttp>=3.9
 Pillow>=10.1.0
 arabic-reshaper>=3.0.0
 python-bidi>=0.4.2
+tzdata
