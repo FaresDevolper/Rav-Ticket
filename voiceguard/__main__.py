@@ -10,6 +10,7 @@
   GUARD_GUILD_ID, GUARD_LOG_CHANNEL_ID, GUARD_STT_API_KEY   (إجباري)
   GUARD_STT_API_URL, GUARD_STT_MODEL, GUARD_TIMEOUT_MINUTES, GUARD_TIMEZONE,
   GUARD_EXEMPT_ROLE_IDS, GUARD_LOG_PING_ROLE_ID, GUARD_ANNOUNCE_NOTICE, GUARD_MIN_LOGPROB,
+  GUARD_STATUS_TEXT (نص "يشاهد" تحت اسم البوت، الافتراضي: by Fares)
   GUARD_STT_CONCURRENCY (كم طلب تحويل بنفس الوقت لكل النسخ، الافتراضي 3)
 
 أكواد الخروج: 0 = انتهى بشكل طبيعي | 2 = خطأ دائم (توكن غلط / مكتبات ناقصة) لا يعاد تشغيله | 3 = ما فيه نسخ مضبوطة | غيرها = يعاد تشغيله
@@ -88,6 +89,7 @@ def load_configs(env=None):
             ping_role_id=_int(pick("GUARD_LOG_PING_ROLE_ID", n)),
             announce=(pick("GUARD_ANNOUNCE_NOTICE", n, "true") or "true").lower() != "false",
             min_logprob=min_logprob,
+            status_text=(pick("GUARD_STATUS_TEXT", n, "by Fares") or "by Fares").strip()[:120],
         ))
     return cfgs
 

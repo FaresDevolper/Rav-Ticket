@@ -2178,8 +2178,24 @@ async def _run_voice_guard():
         delay = min(delay * 2, 300)
 
 
+STATUS_TEXT = (os.getenv("BOT_STATUS_TEXT") or "by Fares").strip()[:120]   # نص "يشاهد" لكل البوتات
+
+
+async def _set_status(name: str, client: discord.Client):
+    try:
+        await client.wait_until_ready()
+        await client.change_presence(
+            activity=discord.Activity(type=discord.ActivityType.watching, name=STATUS_TEXT)
+        )
+    except asyncio.CancelledError:
+        raise
+    except BaseException:
+        log.exception("[%s] فشل ضبط الحالة", name)
+
+
 async def _run_client(name: str, client: discord.Client, token: str):
     """يشغّل بوت واحد. أي خطأ فيه يُسجَّل فقط ولا يوقف البوتات الثانية."""
+    status_task = asyncio.create_task(_set_status(name, client))
     try:
         async with client:
             await client.start(token)
@@ -2191,6 +2207,8 @@ async def _run_client(name: str, client: discord.Client, token: str):
         log.exception("[%s] توقف البوت بسبب خطأ", name)
     else:
         log.warning("[%s] توقف البوت", name)
+    finally:
+        status_task.cancel()
 
 
 async def run_all():

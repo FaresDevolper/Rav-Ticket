@@ -88,6 +88,7 @@ class GuardConfig:
     ping_role_id: Optional[int] = None
     announce: bool = True
     min_logprob: float = -1.0
+    status_text: str = "by Fares"
 
 
 @dataclass
@@ -344,7 +345,7 @@ class GuardBot:
         self.log.info("تم تسجيل الدخول: %s", self.client.user)
         try:
             await self.client.change_presence(
-                activity=discord.Activity(type=discord.ActivityType.watching, name="حماية القذف الصوتية 🛡️"),
+                activity=discord.Activity(type=discord.ActivityType.watching, name=c.status_text),
                 status=discord.Status.online,
             )
         except Exception:
